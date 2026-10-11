@@ -884,8 +884,10 @@ void browser_poll(void)
         n = lwip_socket_read(sock, buf, n > sizeof(buf) ? sizeof(buf) : n);
         if (!n)
             break;
-        if (!rx_bytes)
+        if (!rx_bytes) {
             strcpy(msg, "loading");
+            dbg_printf("web: first byte after %lu ms\n", k_now_ms() - t_start);
+        }
         rx_bytes += n;
         for (i = 0; i < n && hstate != H_DONE; i++)
             http_byte(buf[i]);

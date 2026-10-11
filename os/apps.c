@@ -190,16 +190,49 @@ void app_selftest(void)
     static const uint8_t want[4] = {0xc3, 0xda, 0x55, 0x37};
     uint8_t out[32], i;
     uint32_t t;
-    x25519_ctx *c = malloc(sizeof(*c));
+    x25519_ctx *c;
+    {
+        /* throughput of the primitives */
+        static uint32_t blk[16];
+        uint8_t *buf = malloc(1024);
+        sha256_ctx sc;
+        poly1305_ctx pc;
+        uint16_t k;
+        if (buf) {
+            memset(buf, 0x5a, 1024);
+            t = k_now_ms();
+            for (k = 0; k < 64; k++)
+                chacha_block(blk, buf);
+            con_printf("chacha 4KB %lu ms\n", k_now_ms() - t);
+            t = k_now_ms();
+            sha256_init(&sc);
+            for (k = 0; k < 4; k++)
+                sha256_update(&sc, buf, 1024);
+            sha256_final(&sc, out);
+            con_printf("sha256 4KB %lu ms\n", k_now_ms() - t);
+            t = k_now_ms();
+            poly1305_init(&pc, buf);
+            poly1305_update(&pc, buf, 1024);
+            poly1305_final(&pc, out);
+            con_printf("poly1305 1KB %lu ms\n", k_now_ms() - t);
+            t = k_now_ms();
+            for (k = 0; k < 100; k++)
+                xram_write(XRAM_BROWSER + k * 10u, buf, 1024);
+            con_printf("xram 100KB %lu ms\n", k_now_ms() - t);
+            free(buf);
+        }
+        con_flush();
+    }
+    c = malloc(sizeof(*c));
     if (!c) {
         con_puts("no memory\n");
         return;
     }
     t = k_now_ms();
     x25519_start(c, s, u);
-    for (i = 0; i < 10; i++)
+    for (i = 0; i < 100; i++)
         x25519_step(c);
-    con_printf("10 steps %lu ms\n", k_now_ms() - t);
+    con_printf("100 fe ops %lu ms\n", k_now_ms() - t);
     con_flush();
     while (!x25519_step(c))
         ;

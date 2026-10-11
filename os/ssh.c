@@ -47,7 +47,7 @@ static uint32_t seq_out, seq_in;
 static sha256_ctx *xh;                  /* exchange hash in progress */
 static x25519_ctx *kex;
 static uint32_t remote_chan, remote_window, local_window_used;
-static uint32_t next_draw;
+static uint32_t next_draw, t_conn;
 
 /* allocated while the SSH client runs; host and user are kept in extended
  * RAM in between */
@@ -456,6 +456,7 @@ static void handle_packet(uint8_t *p, uint16_t n)
         fail("channel refused");
         return;
     case 99:                            /* CHANNEL_SUCCESS */
+        dbg_printf("ssh: shell after %lu ms\n", k_now_ms() - t_conn);
         st = S_OPEN;
         msg[0] = 0;
         return;
@@ -658,6 +659,7 @@ static void ssh_connect(void)
     } else {
         st = S_CONNECTING;
         strcpy(msg, "connecting");
+        t_conn = k_now_ms();
     }
 }
 
@@ -831,12 +833,13 @@ void ssh_poll(void)
     if (!sm || !sock)
         return;
     if (st == S_COMPUTE) {
-        if (kex && kx_shared_step(kex, 40)) {
+        if (kex && kx_shared_step(kex, 100)) {
+            dbg_printf("ssh: key exchange done at %lu ms\n", k_now_ms() - t_conn);
             kex_done();
             rx_process();               /* NEWKEYS may already be waiting */
         }
     } else if ((st == S_VERSION || st == S_KEXINIT) && !kx_ready()) {
-        kx_run(40);                     /* the shared key pair must exist first */
+        kx_run(100);                    /* the shared key pair must exist first */
     }
     while (sock && st != S_COMPUTE && (kx_ready() || st > S_KEXINIT)) {
         size_t n = lwip_socket_available(sock);
@@ -860,7 +863,7 @@ void ssh_poll(void)
     if (sock && !lwip_socket_is_active(sock) && st != S_CLOSED)
         fail(msg[0] && !memcmp(msg, "error", 5) ? msg : "connection lost");
     if ((term_dirty || st != S_OPEN) && (int32_t)(k_now_ms() - next_draw) >= 0) {
-        next_draw = k_now_ms() + 150;
+        next_draw = k_now_ms() + (st == S_OPEN ? 150 : 1000);
         draw();
     }
 }

@@ -922,10 +922,10 @@ void tls84_poll(void)
         if (!st->conn->inner_conn)
             continue;
         if (st->phase == P_WAIT_KEY && st->tcp_up) {
-            if (kx_run(40))
+            if (kx_run(100))
                 send_client_hello(st);
         } else if (st->phase == P_KEX) {
-            if (kx_shared_step(st->kex, 40))
+            if (kx_shared_step(st->kex, 100))
                 kex_done(st);
         } else if (!st->rx && !st->app && st->eof != 1) {
             continue;
