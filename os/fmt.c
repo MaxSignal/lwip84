@@ -1,6 +1,6 @@
 /* fmt.c - small vsnprintf: %d %i %u %x %X %c %s %p %%, l modifier, width, '0' and '-' flags */
 #include "kernel.h"
-#ifdef DEBUG
+#ifdef TI84P_DEBUG
 #include "hw.h"
 #endif
 
@@ -155,7 +155,7 @@ int snprintf(char *buf, size_t n, const char *fmt, ...)
 
 void dbg_printf(const char *fmt, ...)
 {
-#ifdef DEBUG
+#ifdef TI84P_DEBUG
     char buf[128];
     const char *p = buf;
     va_list ap;

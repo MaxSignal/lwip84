@@ -5,7 +5,7 @@
 #include "lwip/pbuf.h"
 #include "lwip/etharp.h"
 #include "netif/ethernet.h"
-#include "drivers/usb_ethernet.h"
+#include "ti84p_usb_ethernet.h"
 #include "kernel.h"
 #include "usb.h"
 #include "ncm.h"

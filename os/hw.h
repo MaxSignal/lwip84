@@ -15,7 +15,7 @@ __sfr __at(0x10) port_lcd_cmd;
 __sfr __at(0x11) port_lcd_data;
 __sfr __at(0x20) port_cpu_speed;
 __sfr __at(0x21) port_hw_type;
-#ifdef DEBUG
+#ifdef TI84P_DEBUG
 __sfr __at(0xFE) port_emu_debug;  /* emu84 debug console (DEBUG builds only) */
 #endif
 

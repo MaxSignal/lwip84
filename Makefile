@@ -35,7 +35,7 @@ endif
 
 ifeq ($(DEBUG),1)
 B       = build-debug-$(MODEL)
-DEFS    = -DDEBUG
+DEFS    = -DTI84P_DEBUG
 else
 B       = build-$(MODEL)
 DEFS    =
@@ -49,8 +49,9 @@ CFLAGS  = -mz80 --std-sdcc11 --opt-code-size --constseg CONST $(DEFS) \
 COMMON_C = os/isr.c os/far.c
 COMMON_S = os/crt0.s os/farcall.s os/usb_ll.s
 # everything else is placed in flash pages 1.. by tools/banker.py
-BANKED_C = os/main.c os/demo.c os/lcd.c os/kbd.c os/fmt.c os/font3x5.c os/usb.c os/ncm.c os/heap.c \
+BANKED_C = os/main.c os/demo.c os/apps.c os/lcd.c os/kbd.c os/fmt.c os/font3x5.c os/usb.c os/ncm.c os/heap.c \
            port/sys_arch.c port/sntp_time.c port/bytes.c port/imports.c port/netif_ncm.c \
+           port/usb_ethernet84.c port/tls_stub.c port/lwip_start84.c \
            $(LWIP_C)
 
 # lwIP-CE sources shared with the TI-84 Plus CE build
@@ -61,7 +62,8 @@ LWIP_C = $(addprefix $(LWIP_SRC)/, \
            core/tcp_out.c core/timeouts.c core/udp.c core/stats.c core/sys.c \
            core/ipv4/dhcp.c core/ipv4/etharp.c core/ipv4/icmp.c core/ipv4/ip4.c \
            core/ipv4/ip4_addr.c netif/ethernet.c core/logging.c core/app_config.c \
-           drivers/mem.c)
+           core/dispatch.c core/teardown.c core/altcp.c core/altcp_tcp.c core/altcp_alloc.c \
+           apps/sntp/sntp.c apps/altcp_ws/altcp_ws.c drivers/mem.c lwIP.c)
 
 COMMON_ASM = $(patsubst %.c,$(B)/asm/%.asm,$(COMMON_C)) $(patsubst %.s,$(B)/asm/%.asm,$(COMMON_S))
 BANKED_ASM = $(patsubst $(LWIP_SRC)/%.c,$(B)/asm/lwip/%.asm,$(filter $(LWIP_SRC)/%,$(BANKED_C))) \
