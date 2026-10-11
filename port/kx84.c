@@ -58,7 +58,7 @@ bool kx_run(uint16_t budget_ms)
 void kx_poll(void)
 {
     if (kx_state == 1)
-        kx_run(15);
+        kx_run(8);
 }
 
 bool kx_ready(void)

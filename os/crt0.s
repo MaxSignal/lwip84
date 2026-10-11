@@ -9,10 +9,13 @@
 	.globl	_main
 	.globl	_isr
 	.globl	___farstack_init
+	.globl	___farcall_rst
 
 	.area	_HEADER (ABS)
 	.org	0x0000
 	jp	init
+	.org	0x0010
+	jp	___farcall_rst		; far-call thunks (banker.py)
 	.org	0x0038
 	jp	isr_entry
 	.org	0x0053

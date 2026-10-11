@@ -41,7 +41,8 @@ enum {
     K_MODE, K_DEL, K_ON
 };
 uint8_t kbd_scan(void);          /* raw: key currently held, or K_NONE */
-uint8_t kbd_get(void);           /* edge-triggered with auto-repeat, non-blocking */
+uint8_t kbd_get(void);           /* next key press from the queue, or K_NONE */
+void kbd_isr(void);              /* timer interrupt: scan and queue */
 
 /* formatting and heap: see include/ti84p_libc.h */
 #include "ti84p_libc.h"
@@ -55,6 +56,13 @@ void dbg_printf(const char *fmt, ...);
 extern uint8_t k_is_emulator;
 void k_detect_platform(void);
 void far_read(uint8_t page, uint16_t addr, void *dst, uint16_t len);
+/* extended RAM pages 82h-87h: 96 KiB for application buffers (page text,
+ * terminal scrollback); buffers passed here must lie in 8000h-FFFFh */
+#define XRAM_SIZE 0x18000UL
+#define XRAM_BROWSER 0x00000UL          /* 64 KiB: web page text and links */
+#define XRAM_SSH 0x10000UL              /* 32 KiB: terminal scrollback */
+void xram_read(uint32_t addr, void *dst, uint16_t len);
+void xram_write(uint32_t addr, const void *src, uint16_t len);
 
 /* power */
 extern volatile uint8_t k_on_pressed, k_on_masked;

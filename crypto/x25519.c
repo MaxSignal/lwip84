@@ -175,13 +175,13 @@ enum { IZ = Z2, IX = X2, I0 = X1, I9 = X3, I11 = Z3, I5 = T0, I10 = T1, I20 = T2
 /* z^(p-2) = z^(2^255-21), the usual chain of 254 squarings and 11 multiplications */
 #define SQ(d, s, n) {0, d, s, n}
 #define MUL(d, a, b) {1, d, a, b}
-static const uint8_t inv_prog[][4] = {
+static const uint8_t inv_prog_bk[][4] = {
     SQ(I0, IZ, 1), SQ(IT, I0, 2), MUL(I9, IT, IZ), MUL(I11, I9, I0), SQ(IT, I11, 1),
     MUL(I5, IT, I9), SQ(IT, I5, 5), MUL(I10, IT, I5), SQ(IT, I10, 10), MUL(I20, IT, I10),
     SQ(IT, I20, 20), MUL(IT, IT, I20), SQ(IT, IT, 10), MUL(I50, IT, I10), SQ(IT, I50, 50),
     MUL(I100, IT, I50), SQ(IT, I100, 100), MUL(IT, IT, I100), SQ(IT, IT, 50),
     MUL(IT, IT, I50), SQ(IT, IT, 5), MUL(IT, IT, I11), MUL(IOUT, IX, IT)};
-#define INV_LEN (sizeof(inv_prog) / sizeof(inv_prog[0]))
+#define INV_LEN (sizeof(inv_prog_bk) / sizeof(inv_prog_bk[0]))
 
 void x25519_start(x25519_ctx *c, const uint8_t scalar[32], const uint8_t point[32])
 {
@@ -199,6 +199,7 @@ void x25519_start(x25519_ctx *c, const uint8_t scalar[32], const uint8_t point[3
     c->phase = 0;
     c->ip = 0;
     c->n = 0;
+    c->lp = 0;
 }
 
 static void swap_xz(x25519_ctx *c)
@@ -208,32 +209,52 @@ static void swap_xz(x25519_ctx *c)
     memcpy(t, c->v[Z2], 32); memcpy(c->v[Z2], c->v[Z3], 32); memcpy(c->v[Z3], t, 32);
 }
 
-static void ladder_step(x25519_ctx *c)
+/* one ladder bit (RFC 7748) as a program of field operations, run one
+ * multiplication at a time so that a step is only a few milliseconds */
+enum { O_ADD, O_SUB, O_MUL, O_SQ, O_M121665 };
+static const uint8_t ladder_prog_bk[][4] = {
+    {O_ADD, T0, X2, Z2}, {O_SUB, T1, X2, Z2}, {O_ADD, T2, X3, Z3}, {O_SUB, T3, X3, Z3},
+    {O_MUL, T3, T3, T0},                /* DA */
+    {O_MUL, T2, T2, T1},                /* CB */
+    {O_SQ, T0, T0, 0},                  /* AA */
+    {O_SQ, T1, T1, 0},                  /* BB */
+    {O_ADD, X3, T3, T2}, {O_SQ, X3, X3, 0},            /* x3 = (DA + CB)^2 */
+    {O_SUB, Z3, T3, T2}, {O_SQ, Z3, Z3, 0},
+    {O_MUL, Z3, Z3, X1},                /* z3 = x1 (DA - CB)^2 */
+    {O_MUL, X2, T0, T1},                /* x2 = AA BB */
+    {O_SUB, T1, T0, T1},                /* E = AA - BB */
+    {O_M121665, T2, T1, 0}, {O_ADD, T2, T2, T0},
+    {O_MUL, Z2, T1, T2}};               /* z2 = E (AA + a24 E) */
+#define LADDER_LEN (sizeof(ladder_prog_bk) / sizeof(ladder_prog_bk[0]))
+
+static void ladder_part(x25519_ctx *c)
 {
     fe *v = c->v;
-    uint8_t kt = (c->k[c->bit >> 3] >> (c->bit & 7)) & 1;
-    if (kt != c->sw) {
-        swap_xz(c);
-        c->sw = kt;
+    if (c->lp == 0) {
+        uint8_t kt = (c->k[c->bit >> 3] >> (c->bit & 7)) & 1;
+        if (kt != c->sw) {
+            swap_xz(c);
+            c->sw = kt;
+        }
     }
-    fe_add(v[T0], v[X2], v[Z2]);        /* A */
-    fe_sub(v[T1], v[X2], v[Z2]);        /* B */
-    fe_add(v[T2], v[X3], v[Z3]);        /* C */
-    fe_sub(v[T3], v[X3], v[Z3]);        /* D */
-    fe_mul(v[T3], v[T3], v[T0]);        /* DA */
-    fe_mul(v[T2], v[T2], v[T1]);        /* CB */
-    fe_sq(v[T0], v[T0]);                /* AA */
-    fe_sq(v[T1], v[T1]);                /* BB */
-    fe_add(v[X3], v[T3], v[T2]);
-    fe_sq(v[X3], v[X3]);                /* x3 = (DA + CB)^2 */
-    fe_sub(v[Z3], v[T3], v[T2]);
-    fe_sq(v[Z3], v[Z3]);
-    fe_mul(v[Z3], v[Z3], v[X1]);        /* z3 = x1 (DA - CB)^2 */
-    fe_mul(v[X2], v[T0], v[T1]);        /* x2 = AA BB */
-    fe_sub(v[T1], v[T0], v[T1]);        /* E = AA - BB */
-    fe_mul121665(v[T2], v[T1]);
-    fe_add(v[T2], v[T2], v[T0]);
-    fe_mul(v[Z2], v[T1], v[T2]);        /* z2 = E (AA + a24 E) */
+    for (;;) {
+        const uint8_t *op = ladder_prog_bk[c->lp];
+        uint8_t heavy = op[0] >= O_MUL;
+        switch (op[0]) {
+        case O_ADD: fe_add(v[op[1]], v[op[2]], v[op[3]]); break;
+        case O_SUB: fe_sub(v[op[1]], v[op[2]], v[op[3]]); break;
+        case O_MUL: fe_mul(v[op[1]], v[op[2]], v[op[3]]); break;
+        case O_SQ: fe_sq(v[op[1]], v[op[2]]); break;
+        default: fe_mul121665(v[op[1]], v[op[2]]); break;
+        }
+        if (++c->lp == LADDER_LEN) {
+            c->lp = 0;
+            c->bit--;
+            return;
+        }
+        if (heavy)
+            return;
+    }
 }
 
 bool x25519_step(x25519_ctx *c)
@@ -243,8 +264,8 @@ bool x25519_step(x25519_ctx *c)
     fe_scr = c->scr;
 #endif
     if (c->phase == 0) {
-        ladder_step(c);
-        if (--c->bit < 0) {
+        ladder_part(c);
+        if (c->bit < 0) {
             if (c->sw)
                 swap_xz(c);
             c->phase = 1;
@@ -253,7 +274,7 @@ bool x25519_step(x25519_ctx *c)
     }
     if (c->ip >= INV_LEN)
         return true;
-    op = inv_prog[c->ip];
+    op = inv_prog_bk[c->ip];
     if (op[0]) {
         fe_mul(c->v[op[1]], c->v[op[2]], c->v[op[3]]);
         c->ip++;

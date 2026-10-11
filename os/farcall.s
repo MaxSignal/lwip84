@@ -1,6 +1,8 @@
 ;; farcall.s - cross-bank call trampoline used by the thunks of banker.py.
 ;;
-;; A thunk enters with
+;; A thunk is 4 bytes in page 0:  rst 10h / .db page / .dw target.
+;; RST 10h jumps to ___farcall_rst, which reads the page and target from
+;; the bytes after the RST and continues in ___farcall with
 ;;   B  = flash page of the target, C = caller's A (first 8-bit argument)
 ;;   IY = target address (4000h-7FFFh), HL/DE = argument registers
 ;;   (SP) = return address of the caller
@@ -10,6 +12,7 @@
 ;; interrupts: the ISR must not call banked code.
 	.module farcall
 	.globl	___farcall
+	.globl	___farcall_rst
 	.globl	___farstack_init
 
 FARSTACK_DEPTH = 96
@@ -27,9 +30,25 @@ ___farstack_init::
 	ld	(fc_sp), hl
 	ret
 
+___farcall_rst::
+	ld	(fc_hl), hl
+	ld	(fc_de), de
+	ld	c, a
+	pop	hl			; inline data after the RST
+	ld	b, (hl)
+	inc	hl
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	push	hl
+	pop	iy
+	jr	fc_common
+
 ___farcall::
 	ld	(fc_hl), hl
 	ld	(fc_de), de
+fc_common:
 	pop	de			; caller's return address
 	ld	hl, (fc_sp)
 	ld	(hl), e

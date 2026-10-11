@@ -1,0 +1,12 @@
+/* term.h - terminal emulator for the SSH client (os/term.c) */
+#ifndef TI84P_TERM_H
+#define TI84P_TERM_H
+#include <stdint.h>
+#define TERM_COLS 24
+#define TERM_ROWS 9
+extern uint8_t term_dirty;
+void term_reset(void);
+void term_write(const uint8_t *s, uint16_t n);
+void term_draw(uint16_t back);
+uint16_t term_scrollback(void);
+#endif

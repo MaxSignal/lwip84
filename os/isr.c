@@ -55,6 +55,7 @@ void isr(void)
         k_ms_frac &= 63;
         if (k_on_masked && (id & 0x08)) /* bit 3 set: ON released */
             k_on_masked = 0;
+        kbd_isr();
         port_int_mask = INT_POWER;                       /* acknowledge */
         port_int_mask = k_on_masked ? INT_TIMER1 | INT_POWER
                                     : INT_ON | INT_TIMER1 | INT_POWER;

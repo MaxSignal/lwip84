@@ -15,14 +15,15 @@ typedef struct {
     uint8_t phase;
     int16_t bit;
     uint8_t ip, n;              /* inversion program counter, squarings left */
+    uint8_t lp;                 /* position in the ladder program */
 #ifdef FE_ASM
     uint8_t scr[627];           /* scratch of fe_mul_core */
 #endif
 } x25519_ctx;
 
 void x25519_start(x25519_ctx *c, const uint8_t scalar[32], const uint8_t point[32]);
-/* do one unit of work (a ladder step or an inversion step, a few to a few
- * tens of milliseconds); returns true when the result is ready */
+/* do one unit of work (one field multiplication, about 7 ms with the
+ * Z80 assembly); returns true when the result is ready */
 bool x25519_step(x25519_ctx *c);
 void x25519_result(x25519_ctx *c, uint8_t out[32]);
 /* blocking convenience (host tests) */

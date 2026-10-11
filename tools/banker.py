@@ -11,14 +11,20 @@ stay together).  References are rewritten so that
   * calls from another page, and every place where a function address is
     taken (function pointers, tables), go through a small thunk in page 0.
 
-A thunk switches bank A, calls the real function and switches back.  The
+A thunk (4 bytes: RST 10h, page, address) switches bank A, calls the real
+function and switches back.  The
 return bookkeeping lives on a separate "far stack" (see os/farcall.s), so
 the callee sees exactly the stack layout of a direct call and the normal
 SDCC calling convention (register and stack arguments, callee cleanup)
 keeps working.
 
 Constant data must be compiled with --constseg CONST: it stays in page 0,
-so pointers to constants are valid from every bank.
+so pointers to constants are valid from every bank.  Constants whose name
+ends in "_bk" are the exception: they are moved next to the first function
+of their module that uses them, and all functions of the module that use
+them are kept in the same bank.  Use this for tables that are only read
+by those functions (or by page-0 library code such as memcpy that they
+call): it keeps page 0 free.
 
 Usage:
   banker.py --outdir DIR --thunks DIR/thunks.s [--map map.txt] [--ldargs f]
@@ -60,6 +66,9 @@ def split_comment(line):
     return line, ''
 
 
+BK_RE = re.compile(r'^(_\w+?_bk(?:_\d+)*)::?')   # SDCC adds _N_M to local statics
+
+
 class Module:
     def __init__(self, path, kind):
         self.path = path
@@ -87,7 +96,7 @@ class Module:
                 continue
             if area in CODE_AREAS:
                 lm = LABEL_RE.match(code)
-                if lm and not re.match(r'^\d+\$$', lm.group(1)):
+                if lm and not re.match(r'^\d+\$$', lm.group(1)) and not BK_RE.match(code):
                     self.funcs.append(lm.group(1))
                     if lm.group(2) == ':':
                         self.statics.add(lm.group(1))
@@ -97,6 +106,64 @@ class Module:
                 self.chunk_of.append(chunk if code.strip() else None)
             else:
                 self.chunk_of.append(None)
+
+
+def move_bk_data(mod):
+    """Move "_bk" constants into the code of their first user; returns the
+    list of (first, last) chunk ranges that must share a bank."""
+    blocks = []                         # (name, start, end) line ranges
+    area = None
+    i = 0
+    lines = mod.lines
+    while i < len(lines):
+        code, _ = split_comment(lines[i])
+        m = AREA_RE.match(code)
+        if m:
+            area = m.group(1)
+        bm = BK_RE.match(code)
+        if bm and area not in CODE_AREAS:
+            j = i + 1
+            while j < len(lines):
+                c2, _ = split_comment(lines[j])
+                if AREA_RE.match(c2) or (LABEL_RE.match(c2) and
+                                         not re.match(r'^\d+\$', c2)):
+                    break
+                j += 1
+            blocks.append((bm.group(1), i, j))
+            i = j
+            continue
+        i += 1
+    if not blocks:
+        return []
+    groups = []
+    moves = []                          # (insert after line, block lines)
+    for name, a, b in blocks:
+        users = sorted({ch for ln, ch in zip(lines, mod.chunk_of)
+                        if ch is not None and re.search(r'\b%s\b' % re.escape(name),
+                                                        split_comment(ln)[0])})
+        if not users:
+            continue
+        last = max(k for k, ch in enumerate(mod.chunk_of) if ch == users[0])
+        moves.append((last, a, b))
+        if users[-1] > users[0]:
+            groups.append((users[0], users[-1]))
+    out = []
+    skip = set()
+    for _, a, b in moves:
+        skip.update(range(a, b))
+    after = {}
+    for last, a, b in moves:
+        after.setdefault(last, []).extend(lines[a:b])
+    for k, ln in enumerate(lines):
+        if k in skip:
+            continue
+        out.append(ln)
+        if k in after:
+            out.extend(after[k])
+    mod.lines = out
+    mod.funcs, mod.statics, mod.chunk_of = [], set(), []
+    mod.scan()
+    return groups
 
 
 def assemble_sizes(mod, sdas):
@@ -169,6 +236,10 @@ def main():
 
     for m in mods:
         m.scan()
+        m.glue = set()
+        if m.kind == 'banked':
+            for a, b in move_bk_data(m):
+                m.glue.update(range(a + 1, b + 1))   # chunk k stays with k-1
 
     # Statics of banked modules become globally unique public symbols, so
     # that thunks and other banks can reference them.
@@ -213,10 +284,16 @@ def main():
             m.banks = [0] * len(m.funcs)
             continue
         m.sizes = assemble_sizes(m, a.sdas)
-        for f, sz in zip(m.funcs, m.sizes):
+        for k, (f, sz) in enumerate(zip(m.funcs, m.sizes)):
             if sz > a.bank_size:
                 sys.exit('banker: function %s (%s) is larger than a bank' % (f, m.path))
-            if used.get(bank, 0) + sz > a.bank_size:
+            group = sz
+            if k not in m.glue:         # a group of glued functions moves as a whole
+                n = k + 1
+                while n in m.glue:
+                    group += m.sizes[n]
+                    n += 1
+            if k not in m.glue and used.get(bank, 0) + group > a.bank_size:
                 bank_idx += 1
                 if bank_idx >= len(pages):
                     sys.exit('banker: out of banks (%s)' % a.banks)
@@ -295,10 +372,9 @@ def main():
 
     with open(a.thunks, 'w') as f:
         f.write(';; generated by banker.py - far call thunks (page 0)\n')
-        f.write('\t.module thunks\n\t.globl ___farcall\n\t.area _CODE\n')
+        f.write('\t.module thunks\n\t.area _CODE\n')
         for s in sorted(farsyms):
-            f.write('%s__far::\n\tld\tc, a\n\tld\tb, #%d\n\tld\tiy, #%s\n\tjp\t___farcall\n'
-                    % (s, farsyms[s], s))
+            f.write('%s__far::\n\trst\t0x10\n\t.db\t%d\n\t.dw\t%s\n' % (s, farsyms[s], s))
 
     if a.ldargs:
         with open(a.ldargs, 'w') as f:
@@ -312,7 +388,7 @@ def main():
                     n = sum(sz for sz, bb in zip(m.sizes, m.banks) if bb == b)
                     if n:
                         f.write('    %-28s %5d\n' % (m.name, n))
-            f.write('thunks: %d (%d bytes)\n' % (len(farsyms), 10 * len(farsyms)))
+            f.write('thunks: %d (%d bytes)\n' % (len(farsyms), 4 * len(farsyms)))
 
 
 if __name__ == '__main__':

@@ -183,7 +183,7 @@ static uint8_t is_ip_literal(const char *h)
 
 static void send_client_hello(struct tls84 *st)
 {
-    static const uint8_t fixed_ext[] = {
+    static const uint8_t fixed_ext_bk[] = {
         0x00, 0x0a, 0x00, 0x04, 0x00, 0x02, 0x00, 0x1d,             /* groups: x25519 */
         0x00, 0x0d, 0x00, 0x14, 0x00, 0x12,                         /* signature algorithms */
         0x04, 0x03, 0x08, 0x04, 0x04, 0x01, 0x05, 0x03, 0x08, 0x05,
@@ -192,7 +192,7 @@ static void send_client_hello(struct tls84 *st)
         0x00, 0x33, 0x00, 0x26, 0x00, 0x24, 0x00, 0x1d, 0x00, 0x20  /* key share */
     };
     uint8_t hl = is_ip_literal(st->host) ? 0 : (uint8_t)strlen(st->host);
-    uint16_t ext = sizeof(fixed_ext) + 32 + (hl ? 9 + hl : 0);
+    uint16_t ext = sizeof(fixed_ext_bk) + 32 + (hl ? 9 + hl : 0);
     uint16_t body = 2 + 32 + 33 + 4 + 2 + 2 + ext;
     uint8_t *m = malloc(9 + body), *p;
     if (!m) {
@@ -223,8 +223,8 @@ static void send_client_hello(struct tls84 *st)
         memcpy(p, st->host, hl);
         p += hl;
     }
-    memcpy(p, fixed_ext, sizeof(fixed_ext));
-    p += sizeof(fixed_ext);
+    memcpy(p, fixed_ext_bk, sizeof(fixed_ext_bk));
+    p += sizeof(fixed_ext_bk);
     memcpy(p, kx_pub(), 32);
     sha256_init(&st->th);
     sha256_update(&st->th, m + 5, body + 4);
@@ -369,7 +369,7 @@ static void stream_bytes(struct tls84 *st, const uint8_t *p, uint16_t n)
 
 static void server_hello(struct tls84 *st)
 {
-    static const uint8_t hrr[8] = {0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11};
+    static const uint8_t hrr_bk[8] = {0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11};
     const uint8_t *p = st->acc, *key = NULL;
     uint16_t n = st->acc_n, pos, end;
     uint32_t blen;
@@ -383,7 +383,7 @@ static void server_hello(struct tls84 *st)
         fail(st, "fragmented ServerHello");
         return;
     }
-    if (!memcmp(p + 6, hrr, 8)) {
+    if (!memcmp(p + 6, hrr_bk, 8)) {
         fail(st, "HelloRetryRequest");
         return;
     }

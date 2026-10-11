@@ -1,6 +1,9 @@
-/* main.c - lwIP-84+ OS: start-up and the network test console.
+/* main.c - lwIP-84+ OS: start-up, the application menu and the network
+ * test console.
  *
- * Keys:  Y= status        WINDOW ping gateway    ZOOM DNS lookup
+ * APPS opens the menu (web browser, SSH client, console).
+ * Console keys:
+ *        Y= status        WINDOW ping gateway    ZOOM DNS lookup
  *        TRACE HTTP GET   GRAPH TCP echo (gateway:8084)
  *        MODE SNTP sync   STAT show time   VARS download test (gateway:8085)
  *        CLEAR clear      UP/DOWN scroll back   2nd+ON power off
@@ -19,11 +22,25 @@
 #include "ti84p_usb_ethernet.h"
 #include "tls84.h"
 #include "kx84.h"
+#include "input.h"
+#include "ui.h"
+#include "rng.h"
+
+void browser_enter(void);
+uint8_t browser_key(uint8_t k);
+void browser_poll(void);
+void ssh_enter(void);
+uint8_t ssh_key(uint8_t k);
+void ssh_poll(void);
+
+enum { A_CONSOLE, A_MENU, A_WEB, A_SSH };
+static uint8_t app;
 
 #define DEMO_HOST "example.com"
 
 bool lwip_start(void);
 
+static uint8_t main_r;
 static const char *const usb_names[] = {"off", "wait", "dflt", "addr", "cfg"};
 
 void k_delay_ms(uint16_t ms)
@@ -127,9 +144,67 @@ static const char *gateway_str(void)
     return buf;
 }
 
+static void menu_draw(void)
+{
+    ui_clear();
+    ui_status("lwIP-84+");
+    ui_text(1, " 1  Web browser");
+    ui_text(2, " 2  SSH client");
+    ui_text(3, " 3  Network console");
+    ui_text(5, " 2nd+ON  power off");
+    ui_text(7, kx_ready() ? " key pair ready" : " key pair: computing");
+    lcd_update();
+}
+
+static void app_switch(uint8_t a)
+{
+    app = a;
+    if (a == A_MENU)
+        menu_draw();
+    else if (a == A_WEB)
+        browser_enter();
+    else if (a == A_SSH)
+        ssh_enter();
+    else
+        con_refresh();
+}
+
+/* a key for the menu or one of the applications; returns 1 if consumed */
+static uint8_t app_key(uint8_t k)
+{
+    switch (app) {
+    case A_MENU:
+        if (k == K_1)
+            app_switch(A_WEB);
+        else if (k == K_2)
+            app_switch(A_SSH);
+        else if (k == K_3 || k == K_CLEAR || k == K_MODE)
+            app_switch(A_CONSOLE);
+        else if (k == K_2ND)
+            in_char(k);
+        return 1;
+    case A_WEB:
+        if (!browser_key(k))
+            app_switch(A_MENU);
+        break;
+    case A_SSH:
+        if (!ssh_key(k))
+            app_switch(A_MENU);
+        break;
+    default:
+        if (k == K_APPS) {
+            app_switch(A_MENU);
+            return 1;
+        }
+        return 0;
+    }
+    if (k != K_2ND)
+        in_2nd = 0;
+    return 1;
+}
 void main(void)
 {
-    uint8_t k, shift = 0, ui_div = 0;
+    uint8_t k, ui_div = 0;
     uint32_t now, next_ui = 0;
     port_int_id = 0x00;                 /* map mode 0, timer 1 at 512 Hz */
     port_int_mask = INT_ON | INT_TIMER1 | INT_POWER;
@@ -147,7 +222,7 @@ void main(void)
     dbg_printf("lwip up, heap %u%s\n", heap_free_bytes(), k_is_emulator ? " (emu)" : "");
     if (usb_last_error)
         con_printf("usb start error %u\n", usb_last_error);
-    con_puts("connect USB to a PC\n");
+    con_puts("connect USB to a PC\nAPPS: web browser, SSH\n");
     for (;;) {
         lwip_service_events();
         usb_log_print();
@@ -155,11 +230,20 @@ void main(void)
         app_poll();
         tls84_poll();
         kx_poll();
+        browser_poll();
+        ssh_poll();
         now = k_now_ms();
         if ((int32_t)(now - next_ui) >= 0) {
             next_ui = now + 20;
             k = kbd_get();
-            if (++ui_div >= 12) {       /* status line every ~250 ms */
+            if (k) {
+                uint8_t r;
+                __asm__("ld a, r");     /* key timing and the refresh register */
+                __asm__("ld (_main_r), a");
+                r = main_r ^ (uint8_t)now;
+                rng_mix(&r, 1);
+            }
+            if (++ui_div >= 12 && app == A_CONSOLE) {   /* status line every ~250 ms */
                 ui_div = 0;
                 status_line();
             }
@@ -168,13 +252,18 @@ void main(void)
         }
         if (k_on_pressed) {
             k_on_pressed = 0;
-            if (shift)
+            if (in_2nd) {
+                in_2nd = 0;
                 k_power_off();
-            shift = 0;
+                if (app != A_CONSOLE)
+                    app_switch(app);
+            }
         }
+        if (k && app_key(k))
+            k = K_NONE;
         switch (k) {
         case K_2ND:
-            shift ^= 1;
+            in_char(k);
             break;
         case K_YEQU:
             show_info();
@@ -221,8 +310,9 @@ void main(void)
             break;
         }
         if (k != K_NONE && k != K_2ND)
-            shift = 0;
-        con_flush();
+            in_2nd = 0;
+        if (app == A_CONSOLE)
+            con_flush();
         /* sleep until the next tick or USB interrupt, but keep polling while
          * USB traffic is flowing (the FIFOs are single-buffered) */
         if (!k && (uint32_t)(k_now_ms() - usb_last_activity) > 50)

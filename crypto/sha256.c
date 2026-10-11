@@ -2,7 +2,7 @@
 #include <string.h>
 #include "sha256.h"
 
-static const uint32_t K[64] = {
+static const uint32_t K_bk[64] = {
     0x428a2f98UL, 0x71374491UL, 0xb5c0fbcfUL, 0xe9b5dba5UL, 0x3956c25bUL, 0x59f111f1UL,
     0x923f82a4UL, 0xab1c5ed5UL, 0xd807aa98UL, 0x12835b01UL, 0x243185beUL, 0x550c7dc3UL,
     0x72be5d74UL, 0x80deb1feUL, 0x9bdc06a7UL, 0xc19bf174UL, 0xe49b69c1UL, 0xefbe4786UL,
@@ -15,7 +15,7 @@ static const uint32_t K[64] = {
     0x5b9cca4fUL, 0x682e6ff3UL, 0x748f82eeUL, 0x78a5636fUL, 0x84c87814UL, 0x8cc70208UL,
     0x90befffaUL, 0xa4506cebUL, 0xbef9a3f7UL, 0xc67178f2UL};
 
-static const uint32_t H0[8] = {0x6a09e667UL, 0xbb67ae85UL, 0x3c6ef372UL, 0xa54ff53aUL,
+static const uint32_t H0_bk[8] = {0x6a09e667UL, 0xbb67ae85UL, 0x3c6ef372UL, 0xa54ff53aUL,
                                0x510e527fUL, 0x9b05688cUL, 0x1f83d9abUL, 0x5be0cd19UL};
 
 #define ROTR(x, n) (((x) >> (n)) | ((x) << (32 - (n))))
@@ -38,7 +38,7 @@ static void compress(uint32_t *h, const uint8_t *p)
             uint32_t s1 = ROTR(w14, 17) ^ ROTR(w14, 19) ^ (w14 >> 10);
             wi = w[i & 15] += s0 + s1 + w[(i + 9) & 15];
         }
-        t1 = hh + (ROTR(e, 6) ^ ROTR(e, 11) ^ ROTR(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + wi;
+        t1 = hh + (ROTR(e, 6) ^ ROTR(e, 11) ^ ROTR(e, 25)) + ((e & f) ^ (~e & g)) + K_bk[i] + wi;
         t2 = (ROTR(a, 2) ^ ROTR(a, 13) ^ ROTR(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
         hh = g; g = f; f = e; e = d + t1;
         d = c; c = b; b = a; a = t1 + t2;
@@ -49,7 +49,7 @@ static void compress(uint32_t *h, const uint8_t *p)
 
 void sha256_init(sha256_ctx *c)
 {
-    memcpy(c->h, H0, sizeof(H0));
+    memcpy(c->h, H0_bk, sizeof(H0_bk));
     c->len_lo = c->len_hi = 0;
     c->n = 0;
 }

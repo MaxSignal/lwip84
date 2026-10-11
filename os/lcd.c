@@ -3,7 +3,7 @@
 #include "hw.h"
 #include "kernel.h"
 
-extern const uint8_t font3x5[95][5];
+#include "font3x5.c"
 
 uint8_t lcd_buf[768];          /* 64 rows x 12 bytes, MSB = leftmost pixel */
 static uint8_t con_x, con_y;
@@ -67,10 +67,31 @@ void lcd_clear(void)
 
 void lcd_invert_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h)
 {
-    uint8_t i, j;
-    for (j = y; j < y + h && j < 64; j++)
-        for (i = x; i < x + w && i < 96; i++)
-            lcd_buf[(uint16_t)j * 12 + (i >> 3)] ^= 0x80 >> (i & 7);
+    uint8_t x2, b0, b1, m0, m1, i;
+    uint8_t *row;
+    if (x >= 96 || y >= 64 || !w || !h)
+        return;
+    if (x + w > 96)
+        w = 96 - x;
+    if (y + h > 64)
+        h = 64 - y;
+    x2 = x + w - 1;
+    b0 = x >> 3;
+    b1 = x2 >> 3;
+    m0 = 0xFF >> (x & 7);
+    m1 = 0xFF << (7 - (x2 & 7));
+    if (b0 == b1)
+        m0 &= m1;
+    row = &lcd_buf[(uint16_t)y * 12];
+    while (h--) {
+        row[b0] ^= m0;
+        if (b1 != b0) {
+            for (i = b0 + 1; i < b1; i++)
+                row[i] ^= 0xFF;
+            row[b1] ^= m1;
+        }
+        row += 12;
+    }
 }
 
 void lcd_draw_char(uint8_t x, uint8_t y, char c)
@@ -79,7 +100,21 @@ void lcd_draw_char(uint8_t x, uint8_t y, char c)
     uint8_t r, i;
     if (c < 32 || c > 126)
         c = '?';
-    g = font3x5[c - 32];
+    g = font3x5_bk[c - 32];
+    if (!(x & 3) && x < 96 && y <= 58) {
+        /* text grid: the 4-pixel cell is one nibble */
+        uint8_t *p = &lcd_buf[(uint16_t)y * 12 + (x >> 3)];
+        if (x & 4) {
+            for (r = 0; r < 5; r++, p += 12)
+                *p = (*p & 0xF0) | (g[r] << 1);
+            *p &= 0xF0;
+        } else {
+            for (r = 0; r < 5; r++, p += 12)
+                *p = (*p & 0x0F) | (g[r] << 5);
+            *p &= 0x0F;
+        }
+        return;
+    }
     for (r = 0; r < 6; r++) {
         uint8_t bits = r < 5 ? g[r] << 1 : 0;   /* 4-pixel cell, 1 blank column */
         uint8_t *row = &lcd_buf[(uint16_t)(y + r) * 12];
