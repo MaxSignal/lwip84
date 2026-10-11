@@ -309,8 +309,17 @@ what is needed to talk to a server is implemented:
   not checked, so 16 KiB records need no 16 KiB buffer (records up to 1 KiB
   are buffered to read their content type); outgoing records are sealed
   properly;
-- no HelloRetryRequest, session resumption, early data or KeyUpdate; an
-  empty client Certificate is sent if the server asks for one.
+- session resumption: the first NewSessionTicket of a connection is kept
+  (one ticket, for the host that sent it, at most an hour) and offered with
+  `psk_dhe_ke` on the next connection to the same host. A resumed handshake
+  has no Certificate/CertificateVerify, so most of the SHA-256 work of a
+  full handshake disappears (servers such as Cloudflare, Google, GitHub and
+  OpenSSL send tickets; example.com does not);
+- the TLS layer ACKs every incoming segment at once (no delayed ACK), so a
+  server that writes the handshake as several small records with Nagle on
+  is not held up;
+- no HelloRetryRequest, early data or KeyUpdate; an empty client
+  Certificate is sent if the server asks for one.
 
 The SSH client (`os/ssh.c`) makes the same choices: the host key and its
 signature are not checked and received MACs are not verified.
@@ -325,8 +334,15 @@ experiment, so the handshakes are tuned for speed only:
   but anybody who records the traffic can decrypt it.
 - `RNG_INSECURE_FAST` (`crypto/rng.c`): client randoms, session ids and SSH
   cookies come from xorshift32 instead of SHA-256.
-- HMAC-SHA-256 caches the ipad/opad states of the two most recent keys, so
+- HMAC-SHA-256 caches the ipad/opad states of the four most recent keys, so
   the TLS 1.3 key schedule needs about half the compressions.
+
+Measured in emu84 (two artefacts of passt are left out: it drops data sent
+before its outbound connection is up, which costs a 3 s TCP retransmission,
+and it advertises a 256-byte window that triggers lwIP's 1.5 s persist
+timer): TLS full handshake about 1.9 s after the ServerHello, resumed about
+1.3 s; SSH key exchange about 0.9 s and the shell about 1.8 s after
+connecting.
 
 With `KX_INSECURE_FAST=0` the key pair is generated once in the background
 and reused (about 30 s), and every shared secret costs a 26 s scalar

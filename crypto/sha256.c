@@ -130,9 +130,9 @@ void sha256(const void *data, size_t len, uint8_t out[32])
 }
 
 /* The states after the ipad and opad blocks depend only on the key; the
- * TLS 1.3 key schedule derives several values from each secret, so the two
+ * TLS 1.3 key schedule derives several values from each secret, so the four
  * most recent keys are cached (saves 2 of the 4 compressions per HMAC). */
-#define HMAC_CACHE 2
+#define HMAC_CACHE 4
 static struct {
     uint8_t key[32];
     uint8_t valid;

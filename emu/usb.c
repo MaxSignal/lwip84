@@ -111,7 +111,7 @@ static void ulog(const char *fmt, ...)
     if (!u.verbose)
         return;
     va_start(ap, fmt);
-    fprintf(stderr, "usb: ");
+    fprintf(stderr, "usb: [%llu] ", (unsigned long long)(ti.now_ps / 1000000000ULL));
     vfprintf(stderr, fmt, ap);
     fputc('\n', stderr);
     va_end(ap);

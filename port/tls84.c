@@ -22,6 +22,7 @@
 #include "lwip/priv/altcp_priv.h"
 #include "lwip/pbuf.h"
 #include "lwip/tcp.h"
+#include "lwip/priv/tcp_priv.h"
 #include "tls/includes/tls.h"
 #include "tls/includes/random.h"
 #include "tls/includes/bytes.h"
@@ -57,6 +58,11 @@ struct tls84 {
     uint8_t secret[32];         /* handshake secret, then master secret */
     uint8_t c_hs[32];           /* transcript hash (CH..SH), then client hs traffic secret */
     uint8_t c_key[32], c_iv[12], s_key[32], s_iv[12];
+    uint8_t derived[32];        /* Derive-Secret(early secret, "derived", "") */
+    uint8_t res_master[32];     /* resumption master secret (P_APP) */
+    uint8_t psk_offered, psk_used, ticket_taken;
+    uint8_t *nst;               /* NewSessionTicket being collected */
+    uint16_t nst_n;
     uint32_t c_seq, s_seq;
     x25519_ctx *kex;
     uint32_t t_hello;                   /* for the debug log */
@@ -76,6 +82,36 @@ static const uint8_t empty_hash[32] = {
     0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14, 0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24,
     0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c, 0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55};
 static const uint8_t zeros32[32];
+
+/* Session resumption (RFC 8446 2.2): one ticket, for the last host that
+ * sent one.  A resumed handshake has no Certificate/CertificateVerify, so
+ * the transcript - most of the SHA-256 work of a full handshake - is a few
+ * hundred bytes. */
+static struct {
+    char host[DNS_MAX_NAME_LENGTH + 1];
+    uint8_t psk[32];
+    uint32_t age_add, t_recv, lifetime_ms;
+    uint8_t *ticket;
+    uint16_t tlen;
+} tcache;
+
+static uint8_t ticket_for(const char *host)
+{
+    if (!tcache.ticket || strcmp(tcache.host, host))
+        return 0;
+    if ((uint32_t)(k_now_ms() - tcache.t_recv) >= tcache.lifetime_ms) {
+        free(tcache.ticket);
+        tcache.ticket = NULL;
+        return 0;
+    }
+    return 1;
+}
+
+static void ticket_drop(void)
+{
+    free(tcache.ticket);
+    tcache.ticket = NULL;
+}
 
 /* ------------------------------------------------------------------ */
 
@@ -192,8 +228,13 @@ static void send_client_hello(struct tls84 *st)
         0x00, 0x2b, 0x00, 0x03, 0x02, 0x03, 0x04,                   /* TLS 1.3 */
         0x00, 0x33, 0x00, 0x26, 0x00, 0x24, 0x00, 0x1d, 0x00, 0x20  /* key share */
     };
+    static const uint8_t psk_modes_bk[6] = {0x00, 0x2d, 0x00, 0x02, 0x01, 0x01};
     uint8_t hl = is_ip_literal(st->host) ? 0 : (uint8_t)strlen(st->host);
-    uint16_t ext = sizeof(fixed_ext_bk) + 32 + (hl ? 9 + hl : 0);
+    uint8_t psk = ticket_for(st->host);
+    /* pre_shared_key data: identities (len, id len, id, age), binders (len, 32, binder) */
+    uint16_t pk_data = psk ? 2 + 2 + tcache.tlen + 4 + 2 + 1 + 32 : 0;
+    uint16_t psk_len = psk ? 6 + 4 + pk_data : 0;   /* + psk_key_exchange_modes */
+    uint16_t ext = sizeof(fixed_ext_bk) + 32 + (hl ? 9 + hl : 0) + psk_len;
     uint16_t body = 2 + 32 + 33 + 4 + 2 + 2 + ext;
     uint8_t *m = malloc(9 + body), *p;
     if (!m) {
@@ -227,8 +268,44 @@ static void send_client_hello(struct tls84 *st)
     memcpy(p, fixed_ext_bk, sizeof(fixed_ext_bk));
     p += sizeof(fixed_ext_bk);
     memcpy(p, kx_pub(), 32);
+    p += 32;
     sha256_init(&st->th);
-    sha256_update(&st->th, m + 5, body + 4);
+    if (psk) {
+        uint8_t early[32], key[32];
+        uint32_t age = (uint32_t)(k_now_ms() - tcache.t_recv) + tcache.age_add;
+        memcpy(p, psk_modes_bk, 6);
+        p += 6;
+        p = put16(p, 0x0029);           /* pre_shared_key, must be last */
+        p = put16(p, pk_data);
+        p = put16(p, 2 + tcache.tlen + 4);
+        p = put16(p, tcache.tlen);
+        memcpy(p, tcache.ticket, tcache.tlen);
+        p += tcache.tlen;
+        *p++ = (uint8_t)(age >> 24); *p++ = (uint8_t)(age >> 16);
+        *p++ = (uint8_t)(age >> 8); *p++ = (uint8_t)age;
+        /* binder = HMAC(finished key of the binder key, Hash(ClientHello
+         * without the binders)) */
+        hkdf_extract(zeros32, tcache.psk, early);
+        hkdf_expand_label(early, "derived", empty_hash, 32, st->derived, 32);
+        hkdf_expand_label(early, "res binder", empty_hash, 32, key, 32);
+        hkdf_expand_label(key, "finished", NULL, 0, key, 32);
+        sha256_update(&st->th, m + 5, (uint16_t)(p - (m + 5)));
+        {
+            sha256_ctx t;
+            uint8_t h[32];
+            memcpy(&t, &st->th, sizeof(t));
+            sha256_final(&t, h);
+            p = put16(p, 33);
+            *p++ = 32;
+            hmac_sha256(key, 32, h, 32, p);
+            sha256_update(&st->th, p - 3, 35);
+        }
+        st->psk_offered = 1;
+        dbg_printf("tls: offering a ticket for %s\n", tcache.host);
+    } else {
+        memcpy(st->derived, derived_early, 32);
+        sha256_update(&st->th, m + 5, body + 4);
+    }
     if (send_raw(st, m, 9 + body) != ERR_OK)
         fail(st, "cannot send ClientHello");
     else
@@ -272,7 +349,8 @@ static void server_finished(struct tls84 *st)
     if (st->cert_req) {                 /* empty client Certificate */
         static const uint8_t cert[8] = {11, 0, 0, 4, 0, 0, 0, 0};
         sha256_update(&st->th, cert, 8);
-        sha256_final(&st->th, fin + 4);
+        memcpy(&t, &st->th, sizeof(t));
+        sha256_final(&t, fin + 4);
         send_record(st, 22, cert, 8, 1);
     } else {
         memcpy(fin + 4, th, 32);
@@ -288,6 +366,10 @@ static void server_finished(struct tls84 *st)
     hkdf_expand_label(st->secret, "c ap traffic", th, 32, sec, 32);
     traffic_keys(sec, st->c_key, st->c_iv);
     st->c_seq = 0;
+    /* resumption master secret: Hash(ClientHello .. client Finished) */
+    sha256_update(&st->th, fin, 36);
+    sha256_final(&st->th, th);
+    hkdf_expand_label(st->secret, "res master", th, 32, st->res_master, 32);
     tls_secure_memzero(st->secret, 32);
     tls_secure_memzero(st->c_hs, 32);
     tls_secure_memzero(sec, 32);
@@ -295,6 +377,36 @@ static void server_finished(struct tls84 *st)
     dbg_printf("tls: handshake done after %lu ms\n", k_now_ms() - st->t_hello);
     if (st->conn->connected)
         st->conn->connected(st->conn->arg, st->conn, ERR_OK);
+}
+
+/* NewSessionTicket (RFC 8446 4.6.1): keep the first one of a connection */
+static void new_session_ticket(struct tls84 *st, const uint8_t *b, uint16_t n)
+{
+    uint32_t life;
+    uint8_t nl;
+    uint16_t tl;
+    if (n < 4 + 4 + 1 || st->ticket_taken)
+        return;
+    life = (uint32_t)b[0] << 24 | (uint32_t)b[1] << 16 | (uint16_t)b[2] << 8 | b[3];
+    nl = b[8];
+    if (9 + nl + 2 > n)
+        return;
+    tl = (uint16_t)b[9 + nl] << 8 | b[10 + nl];
+    if (!tl || 11 + nl + tl > n || !life)
+        return;
+    ticket_drop();
+    tcache.ticket = malloc(tl);
+    if (!tcache.ticket)
+        return;
+    memcpy(tcache.ticket, b + 11 + nl, tl);
+    tcache.tlen = tl;
+    hkdf_expand_label(st->res_master, "resumption", b + 9, nl, tcache.psk, 32);
+    tcache.age_add = (uint32_t)b[4] << 24 | (uint32_t)b[5] << 16 | (uint16_t)b[6] << 8 | b[7];
+    tcache.t_recv = k_now_ms();
+    tcache.lifetime_ms = life > 3600 ? 3600000UL : life * 1000UL;   /* at most an hour */
+    strcpy(tcache.host, st->host);
+    st->ticket_taken = 1;
+    dbg_printf("tls: ticket for %s (%u bytes)\n", tcache.host, tl);
 }
 
 /* encrypted handshake messages: hashed, framed, otherwise ignored */
@@ -314,10 +426,21 @@ static void hs_input(struct tls84 *st, const uint8_t *p, uint16_t n)
                           st->hm_hdr[3];
             if (st->hm_hdr[0] == 13)
                 st->cert_req = 1;
+            if (st->phase == P_APP)
+                dbg_printf("tls: post-handshake message %u len %lu\n", st->hm_hdr[0], st->hm_left);
+            if (st->phase == P_APP && st->hm_hdr[0] == 4 && st->hm_left <= 1024 &&
+                !st->ticket_taken && !st->nst) {
+                st->nst = malloc((uint16_t)st->hm_left);
+                st->nst_n = 0;
+            }
         } else {
             k = n < st->hm_left ? n : (uint16_t)st->hm_left;
             if (st->phase == P_HS)
                 sha256_update(&st->th, p, k);
+            if (st->nst) {
+                memcpy(st->nst + st->nst_n, p, k);
+                st->nst_n += k;
+            }
             p += k;
             n -= k;
             st->hm_left -= k;
@@ -326,6 +449,11 @@ static void hs_input(struct tls84 *st, const uint8_t *p, uint16_t n)
             st->hm_hdr_n = 0;
             if (st->phase == P_HS && st->hm_hdr[0] == 20)
                 server_finished(st);
+            if (st->nst) {
+                new_session_ticket(st, st->nst, st->nst_n);
+                free(st->nst);
+                st->nst = NULL;
+            }
         }
     }
 }
@@ -407,12 +535,21 @@ static void server_hello(struct tls84 *st)
             break;
         if (type == 0x0033 && len == 36 && p[pos + 1] == 0x1d)
             key = p + pos + 4;
+        if (type == 0x0029 && len == 2 && st->psk_offered)
+            st->psk_used = 1;               /* our ticket (identity 0) was taken */
         pos += len;
     }
     if (!key) {
         fail(st, "no X25519 key share");
         return;
     }
+    if (st->psk_offered && !st->psk_used) {
+        /* full handshake after all: back to the plain key schedule (the
+         * transcript already holds the ClientHello as sent) */
+        memcpy(st->derived, derived_early, 32);
+        ticket_drop();
+    }
+    dbg_printf("tls: %s handshake\n", st->psk_used ? "resumed" : "full");
     sha256_update(&st->th, p, end);
     memcpy(&t, &st->th, sizeof(t));
     sha256_final(&t, st->c_hs);
@@ -432,7 +569,7 @@ static void kex_done(struct tls84 *st)
     x25519_result(st->kex, shared);
     free(st->kex);
     st->kex = NULL;
-    hkdf_extract(derived_early, shared, hs);
+    hkdf_extract(st->derived, shared, hs);
     hkdf_expand_label(hs, "s hs traffic", st->c_hs, 32, s_hs, 32);
     hkdf_expand_label(hs, "c hs traffic", st->c_hs, 32, st->c_hs, 32);
     traffic_keys(s_hs, st->s_key, st->s_iv);
@@ -666,6 +803,11 @@ static err_t lower_recv(void *arg, struct altcp_pcb *inner, struct pbuf *p, err_
     } else {
         st->rx = p;
     }
+    /* ACK at once instead of lwIP's delayed ACK (up to 250 ms): servers
+     * write the handshake as several small records, and with Nagle on their
+     * side each one waits for the ACK of the previous one */
+    if (p && inner && inner->state)
+        tcp_ack_now((struct tcp_pcb *)inner->state);
     return tls_process(st) ? ERR_OK : ERR_ABRT;
 }
 
@@ -846,6 +988,7 @@ static void f_dealloc(struct altcp_pcb *conn)
         pbuf_free(st->app);
     free(st->acc);
     free(st->kex);
+    free(st->nst);
     tls_secure_memzero(st, sizeof(*st));
     free(st);
     conn->state = NULL;

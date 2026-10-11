@@ -531,6 +531,7 @@ static void rx_process(void)
                 hash_string(version, sizeof(version) - 1);   /* V_C */
                 hash_string(rx, vl);                         /* V_S */
                 st = S_KEXINIT;
+                dbg_printf("ssh: kexinit at %lu ms (abs %lu)\n", k_now_ms() - t_conn, k_now_ms());
                 send_kexinit();
             }
             memmove(rx, rx + l, rx_n - l);
@@ -830,6 +831,13 @@ uint8_t ssh_key(uint8_t k)
 
 void ssh_poll(void)
 {
+#ifdef TI84P_DEBUG
+    static uint8_t last_st;
+    if (sm && st != last_st) {
+        dbg_printf("ssh: state %u at %lu ms\n", st, k_now_ms() - t_conn);
+        last_st = st;
+    }
+#endif
     if (!sm || !sock)
         return;
     if (st == S_COMPUTE) {
