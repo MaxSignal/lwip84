@@ -72,6 +72,11 @@ in `../../tools/local/bin`; override with `SDCC_BIN=` and `TOOLS=`.
 `tools/get-key.sh` downloads TI's public OS signing key `0A` (factored in 2009,
 distributed by KnightOS) into `keys/`; the key is not part of this repository.
 
+Every push to the `ti84plus` branch runs `.github/workflows/ti84plus.yml`:
+it builds the release and debug images for both models with the prebuilt
+SDCC 4.4.0, runs the crypto tests below and publishes the `.8xu` and `.rom`
+files as a release `ti84plus-build-N`.
+
 ### Memory layout and code banking
 
 ```
@@ -364,8 +369,9 @@ tables must be addressed through equates (`name = .`), not labels.
 gcc -O2 -o ../../tmp/z80run tests/z80run.c
 python3 tests/asm_test.py sha256 20
 python3 tests/asm_test.py poly1305 30
-``` `tests/crypto_test.c`
-checks the C code against the RFC test vectors on the host:
+```
+
+`tests/crypto_test.c` checks the C code against the RFC test vectors on the host:
 
 ```
 gcc -O2 -I crypto -o /tmp/crypto_test tests/crypto_test.c crypto/sha256.c crypto/chacha.c crypto/x25519.c

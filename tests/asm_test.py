@@ -8,7 +8,7 @@ import os, random, struct, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TI84P = os.path.dirname(HERE)
-SDCC = os.path.abspath(os.path.join(TI84P, '../../tools/sdcc-4.4.0/bin'))
+SDCC = os.environ.get('SDCC_BIN', os.path.abspath(os.path.join(TI84P, '../../tools/sdcc-4.4.0/bin')))
 RUN = os.environ.get('Z80RUN', os.path.abspath(os.path.join(TI84P, '../../tmp/z80run')))
 TMP = os.environ.get('TMPDIR', os.path.abspath(os.path.join(TI84P, '../../tmp')))
 
