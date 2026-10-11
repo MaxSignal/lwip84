@@ -7,7 +7,19 @@ static uint32_t ld32(const uint8_t *p)
     return (uint32_t)p[3] << 24 | (uint32_t)p[2] << 16 | (uint16_t)p[1] << 8 | p[0];
 }
 
-#ifndef CHACHA_ASM
+#ifdef FE_ASM
+/* tools/gen_fe_z80.py */
+const uint32_t *ch_in;
+uint8_t *ch_out;
+void chacha_block_core(void);
+
+void chacha_block(const uint32_t in[16], uint8_t out[64])
+{
+    ch_in = in;
+    ch_out = out;
+    chacha_block_core();
+}
+#else
 #define ROTL(x, n) (((x) << (n)) | ((x) >> (32 - (n))))
 #define QR(a, b, c, d) \
     x[a] += x[b]; x[d] ^= x[a]; x[d] = ROTL(x[d], 16); \

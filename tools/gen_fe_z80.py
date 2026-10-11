@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""gen_fe_z80.py OUT.s - Z80 field arithmetic mod 2^255-19 for crypto/x25519.c.
+"""gen_fe_z80.py OUT.s - Z80 field arithmetic mod 2^255-19 for crypto/x25519.c
+and the ChaCha20 block function for crypto/chacha.c.
 
 The module is placed alone on a fixed flash page (banker.py fixed@PAGE), so
 its tables start at 4000h and are addressed absolutely:
@@ -287,5 +288,115 @@ for name, op, fix in (('_fe_add_core', 'adc', 'add'), ('_fe_sub_core', 'sbc', 's
     w('\tld\t(hl), a')
     w('\tdjnz\t00052$')
     w('\tjr\t00051$')
+
+# --- ChaCha20 block: ch_out[64] = ChaCha20(ch_in[16 words]).  The working
+# state is at the fixed address ch_x so every word has an absolute address;
+# each quarter-round step "p += q; r ^= p; r <<<= n" keeps p and r in BC/DE
+# and stores r already rotated (16 and 8 by byte order, 12 = 8 + RLD nibble
+# rotation, 7 = 8 then a 1-bit right rotation in registers).
+w('\t.area _DATA')
+w('ch_x:\t.ds 64')
+w('ch_n:\t.ds 1')
+w('\t.area _CODE')
+w('\t.globl _ch_in, _ch_out, _chacha_block_core')
+
+
+def X(i, k=0):
+    return '(ch_x+%d)' % (4 * i + k)
+
+
+def step(p, q, r, n):
+    w('\tld\thl, %s' % X(p))
+    w('\tld\tde, %s' % X(q))
+    w('\tadd\thl, de')
+    w('\tld\t%s, hl' % X(p))
+    w('\tld\tb, h')
+    w('\tld\tc, l')
+    w('\tld\thl, %s' % X(p, 2))
+    w('\tld\tde, %s' % X(q, 2))
+    w('\tadc\thl, de')
+    w('\tld\t%s, hl' % X(p, 2))
+    w('\tld\tde, %s' % X(r))           # DE = r_lo ^ p_lo
+    w('\tld\ta, e')
+    w('\txor\ta, c')
+    w('\tld\te, a')
+    w('\tld\ta, d')
+    w('\txor\ta, b')
+    w('\tld\td, a')
+    w('\tld\tbc, %s' % X(r, 2))        # BC = r_hi ^ p_hi
+    w('\tld\ta, c')
+    w('\txor\ta, l')
+    w('\tld\tc, a')
+    w('\tld\ta, b')
+    w('\txor\ta, h')
+    w('\tld\tb, a')
+    # value bytes: b0 = E, b1 = D, b2 = C, b3 = B
+    if n == 16:
+        w('\tld\t%s, bc' % X(r))
+        w('\tld\t%s, de' % X(r, 2))
+        return
+    if n == 7:                          # rotate [b3 b0 b1 b2] right by one bit
+        w('\tld\ta, b')
+        w('\trra')
+        w('\trr\tc')
+        w('\trr\td')
+        w('\trr\te')
+        w('\trr\tb')
+    w('\tld\ta, b')                    # store [b3 b0 b1 b2]
+    w('\tld\t%s, a' % X(r))
+    w('\tld\t%s, de' % X(r, 1))
+    w('\tld\ta, c')
+    w('\tld\t%s, a' % X(r, 3))
+    if n == 12:                         # and rotate left by a nibble
+        w('\trrca')
+        w('\trrca')
+        w('\trrca')
+        w('\trrca')
+        w('\tld\thl, #%s' % X(r)[1:-1])
+        for k in range(4):
+            w('\trld')
+            if k < 3:
+                w('\tinc\thl')
+
+
+def qr(a, b, c, d):
+    step(a, b, d, 16)
+    step(c, d, b, 12)
+    step(a, b, d, 8)
+    step(c, d, b, 7)
+
+
+w('_chacha_block_core::')
+w('\tld\thl, (_ch_in)')
+w('\tld\tde, #ch_x')
+w('\tld\tbc, #64')
+w('\tldir')
+w('\tld\ta, #10')
+w('00080$:')
+w('\tld\t(ch_n), a')
+for a, b, c, d in ((0, 4, 8, 12), (1, 5, 9, 13), (2, 6, 10, 14), (3, 7, 11, 15),
+                   (0, 5, 10, 15), (1, 6, 11, 12), (2, 7, 8, 13), (3, 4, 9, 14)):
+    qr(a, b, c, d)
+w('\tld\ta, (ch_n)')
+w('\tdec\ta')
+w('\tjp\tnz, 00080$')
+# x += in (word by word), then copy to out
+w('\tld\thl, #ch_x')
+w('\tld\tde, (_ch_in)')
+w('\tld\tb, #16')
+w('00081$:')
+w('\tor\ta, a')
+for k in range(4):
+    w('\tld\ta, (de)')
+    w('\tadc\ta, (hl)')
+    w('\tld\t(hl), a')
+    w('\tinc\tde')
+    w('\tinc\thl')
+w('\tdjnz\t00081$')
+w('\tld\thl, #ch_x')
+w('\tld\tde, (_ch_out)')
+w('\tld\tbc, #64')
+w('\tldir')
+w('\tret')
 
 open(sys.argv[1], 'w').write('\n'.join(out) + '\n')

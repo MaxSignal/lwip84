@@ -39,7 +39,7 @@ enum { T_TEXT, T_TAG, T_COMMENT, T_ENTITY, T_SKIP };
 static struct lwip_socket *sock;
 static uint8_t state, editing, redirects, hist_n;
 static uint16_t nlines, top, nlinks, link_used;
-static uint32_t rx_bytes, last_draw;
+static uint32_t rx_bytes, last_draw, t_start;
 
 /* HTTP */
 static uint8_t hstate, chunked, is_html, http_status, do_redirect;
@@ -57,7 +57,7 @@ static uint8_t col, word_n, utf8_skip;
 struct browser_mem {
     char url[URL_MAX + 1], host[64], title[COLS + 1];   /* saved: keep first */
     char edit_buf[URL_MAX + 1];
-    char request[URL_MAX + 120];
+    char request[URL_MAX + 64 + 128];
     struct line_edit le;
     char msg[COLS + 1];
     char hline[128];
@@ -607,6 +607,7 @@ static void load(const char *u)
     }
     strcpy(msg, tls ? "TLS handshake..." : "connecting");
     state = B_LOADING;
+    t_start = k_now_ms();
 }
 
 static void push_history(void)
@@ -905,6 +906,7 @@ void browser_poll(void)
         else
             msg[0] = 0;
         last_draw = k_now_ms() - 1000;  /* show the result now */
+        dbg_printf("web: %lu bytes, %u lines, %lu ms\n", rx_bytes, nlines, k_now_ms() - t_start);
     }
     if (!editing && (uint32_t)(k_now_ms() - last_draw) > 1000) {
         last_draw = k_now_ms();

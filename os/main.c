@@ -6,6 +6,7 @@
  *        Y= status        WINDOW ping gateway    ZOOM DNS lookup
  *        TRACE HTTP GET   GRAPH TCP echo (gateway:8084)
  *        MODE SNTP sync   STAT show time   VARS download test (gateway:8085)
+ *        MATH HTTPS GET (gateway:4433)   PRGM X25519 self test
  *        CLEAR clear      UP/DOWN scroll back   2nd+ON power off
  */
 #include <string.h>
@@ -183,6 +184,8 @@ static uint8_t app_key(uint8_t k)
 {
     switch (app) {
     case A_MENU:
+        if (k != K_2ND)
+            in_2nd = 0;
         if (k == K_1)
             app_switch(A_WEB);
         else if (k == K_2)
@@ -292,9 +295,6 @@ void main(void)
             break;
         case K_VARS:
             app_download(gateway_str(), 8085);
-            break;
-        case K_LOG:
-            kx_start();
             break;
         case K_PRGM:
             app_selftest();
