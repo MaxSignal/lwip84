@@ -102,6 +102,22 @@ static void add1305(uint8_t *h, const uint8_t *c)
     }
 }
 
+#ifdef FE_ASM
+/* Z80 assembly (tools/gen_poly1305_z80.py) on the fixed crypto page */
+uint8_t *p13_h;
+const uint8_t *p13_r, *p13_m;
+uint8_t p13_hb;
+void poly1305_block_core(void);
+
+static void block1305(poly1305_ctx *c, const uint8_t *m, uint8_t hibit)
+{
+    p13_h = c->h;
+    p13_r = c->r;
+    p13_m = m;
+    p13_hb = hibit;
+    poly1305_block_core();
+}
+#else
 static void block1305(poly1305_ctx *c, const uint8_t *m, uint8_t hibit)
 {
     uint8_t blk[17], i, j;
@@ -133,6 +149,7 @@ static void block1305(poly1305_ctx *c, const uint8_t *m, uint8_t hibit)
     }
     c->h[16] += (uint8_t)u;
 }
+#endif
 
 void poly1305_init(poly1305_ctx *c, const uint8_t key[32])
 {

@@ -92,11 +92,12 @@ $(B)/asm/%.asm: %.s
 	cp $< $@
 
 FIXED_ASM = $(B)/asm/crypto/fe_z80.asm
-$(FIXED_ASM): tools/gen_fe_z80.py tools/gen_sha256_z80.py
+$(FIXED_ASM): tools/gen_fe_z80.py tools/gen_sha256_z80.py tools/gen_poly1305_z80.py
 	@mkdir -p $(dir $@)
 	$(PY) tools/gen_fe_z80.py $@.fe
 	$(PY) tools/gen_sha256_z80.py $@.sha
-	cat $@.fe $@.sha > $@
+	$(PY) tools/gen_poly1305_z80.py $@.p13
+	cat $@.fe $@.sha $@.p13 > $@
 
 $(B)/banked.stamp: $(COMMON_ASM) $(BANKED_ASM) $(FIXED_ASM) tools/banker.py
 	rm -rf $(B)/bk && mkdir -p $(B)/bk

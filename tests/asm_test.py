@@ -101,7 +101,60 @@ def test_sha256(n):
     return 0
 
 
+P13_STUB = """\t.module stub
+\t.globl _p13_h, _p13_r, _p13_m, _p13_hb, _poly1305_block_core
+\t.area _DATA
+_p13_h:: .ds 2
+_p13_r:: .ds 2
+_p13_m:: .ds 2
+_p13_hb:: .ds 1
+\t.area _CODE
+start::
+\tld hl, #0xE000
+\tld (_p13_h), hl
+\tld hl, #0xE020
+\tld (_p13_r), hl
+\tld hl, #0xE040
+\tld (_p13_m), hl
+\tld a, (0xE060)
+\tld (_p13_hb), a
+\tld a, (0xE061)
+\tld b, a
+00001$:
+\tpush bc
+\tcall _poly1305_block_core
+\tpop bc
+\tdjnz 00001$
+\thalt
+"""
+
+P = (1 << 130) - 5
+
+
+def test_poly1305(n):
+    d, start = build('gen_poly1305_z80.py', P13_STUB)
+    rnd = random.Random(2)
+    for k in range(n):
+        r = int.from_bytes(bytes(rnd.getrandbits(8) for _ in range(16)), 'little')
+        r &= 0x0ffffffc0ffffffc0ffffffc0fffffff
+        h = rnd.getrandbits(130) if k % 3 else 0
+        m = bytes(rnd.getrandbits(8) for _ in range(16))
+        hb = 1 if k % 4 else 0
+        reps = 1 + k % 3
+        want = h
+        for _ in range(reps):
+            want = ((want + int.from_bytes(m, 'little') + (hb << 128)) * r) % P
+        blob = h.to_bytes(17, 'little') + bytes(15) + r.to_bytes(17, 'little') + bytes(15) + m + bytes(16) + bytes([hb, reps])
+        got, t = run(d, start, [(0xE000, blob)], (0xE000, 17))
+        gv = int.from_bytes(got, 'little')
+        if gv % P != want or gv >= 1 << 131:
+            print('poly1305 FAIL', k, hex(gv), hex(want))
+            return 1
+    print('poly1305 ok, %d cases, %d T-states for the last (%d blocks, first builds the table)' % (n, t, reps))
+    return 0
+
+
 if __name__ == '__main__':
     what = sys.argv[1]
     n = int(sys.argv[2]) if len(sys.argv) > 2 else 20
-    sys.exit({'sha256': test_sha256}[what](n))
+    sys.exit({'sha256': test_sha256, 'poly1305': test_poly1305}[what](n))
