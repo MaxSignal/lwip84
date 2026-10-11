@@ -39,15 +39,17 @@ On Windows, enable Internet Connection Sharing for the new adapter.
 
 | Part | State |
 |------|-------|
-| Standalone OS (boot, LCD console, keypad, timer, power off) | works in emu84 |
-| USB peripheral driver (Mentor MUSBFDRC), CDC-NCM function | works in emu84, **not yet tested on hardware** |
-| lwIP-CE core: ARP, IPv4, ICMP, UDP, TCP, DHCP, DNS, SNTP | works in emu84 |
-| lwIP-CE socket API (`lwIP.c`), plain WebSocket | works in emu84 |
+| Standalone OS (boot, LCD console, keypad, timer, power off) | works on hardware |
+| USB peripheral driver (Mentor MUSBFDRC), CDC-NCM function | works on hardware (Linux `cdc_ncm`) |
+| lwIP-CE core: ARP, IPv4, ICMP, UDP, TCP, DHCP, DNS | works on hardware |
+| lwIP-CE socket API (`lwIP.c`) | HTTP GET over the Internet works on hardware |
+| SNTP, plain WebSocket | work in emu84 |
 | TLS / WSS | not available (see below) |
 
-Measured in the emulator: TCP download about 8 KB/s, limited to about 14 KB/s
-by the CPU (the emulator's PC side adds latency, so real hardware should be
-closer to the CPU limit).
+Tested on a TI-84 Plus (hardware revision 2, boot code 1.00) connected to Linux
+with NetworkManager in shared mode: DHCP lease, ping from the PC (about 19 ms),
+HTTP GET of example.com (891 bytes in 1.4 s, debug build) and a TCP download
+from the PC at about 6.2 KB/s.
 
 ## Building
 
@@ -157,6 +159,13 @@ tools/flash-calc.sh --debug     # versions, backup + ROM dump, send the OS, wait
 `flash-calc.sh` stores the backup (all variables and apps, `calc-info.txt`
 and a ROM dump) in `../../backup/DATE/` and stops if the boot code is 1.03 or
 newer. `ti84link check FILE.8xu` parses an upgrade file like TiLP does.
+
+To replace lwIP-84+ with a newer build, put the calculator into the boot
+code's receive mode (remove a battery, hold DEL while putting it back), then
+plug in the USB cable *after* "Waiting..." is shown and run
+`ti84link sendos FILE.8xu --force` within about 50 seconds. The boot code
+answers slowly; retry `sendos` every few seconds until it starts.
+`tools/ti84link romdump` does not work yet (the dumper re-enumerates USB).
 
 Manually:
 
