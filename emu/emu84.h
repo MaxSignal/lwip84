@@ -36,6 +36,8 @@ struct ti84 {
     int profiling;
     uint32_t *prof;                     /* samples per (bank << 16 | pc) */
     uint64_t prof_cycles, halt_cycles;
+    uint32_t fc_addr;                   /* address of "jp (iy)" in farcall.s, 0 = off */
+    uint32_t *fc_hist;                  /* far calls per (bank << 16 | target) */
     char log[65536];
     size_t log_len;
 };

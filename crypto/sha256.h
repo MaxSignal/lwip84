@@ -18,7 +18,7 @@ void sha256(const void *data, size_t len, uint8_t out[32]);
 
 typedef struct {
     sha256_ctx inner;
-    uint8_t okey[64];
+    uint32_t outer[8];          /* SHA-256 state after the opad block */
 } hmac_sha256_ctx;
 
 void hmac_sha256_init(hmac_sha256_ctx *c, const uint8_t *key, size_t keylen);

@@ -427,6 +427,7 @@ static void server_hello(struct tls84 *st)
 
 static void kex_done(struct tls84 *st)
 {
+    dbg_printf("tls: +%lu kex\n", k_now_ms() - st->t_hello);
     uint8_t shared[32], hs[32], s_hs[32];
     x25519_result(st->kex, shared);
     free(st->kex);
@@ -464,6 +465,7 @@ static void rec_start(struct tls84 *st)
 {
     uint8_t type = st->hdr[0];
     uint16_t len = (uint16_t)st->hdr[3] << 8 | st->hdr[4];
+    dbg_printf("tls: +%lu rec %u len %u ph %u\n", k_now_ms() - st->t_hello, type, len, st->phase);
     st->body_left = len;
     if (len > 16384 + 256) {
         fail(st, "bad record");
@@ -498,6 +500,7 @@ static void rec_start(struct tls84 *st)
 
 static void rec_end(struct tls84 *st)
 {
+    dbg_printf("tls: +%lu rec end\n", k_now_ms() - st->t_hello);
     if (st->buffered) {
         uint16_t n = st->acc_n;
         while (n && !st->acc[n - 1])

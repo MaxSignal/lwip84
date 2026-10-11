@@ -513,8 +513,11 @@ static void run_ps(uint64_t dur)
         if (pins & Z80_MREQ) {
             uint16_t a = Z80_GET_ADDR(pins);
             if (pins & Z80_RD) {
-                if (pins & Z80_M1)
+                if (pins & Z80_M1) {
                     check_fetch(a);
+                    if (ti.fc_addr && a == ti.fc_addr && ti.fc_hist)
+                        ti.fc_hist[((uint32_t)ti.bank_a << 16) | ti.cpu.iy]++;
+                }
                 Z80_SET_DATA(pins, mem_read(a));
             } else if (pins & Z80_WR) {
                 mem_write(a, Z80_GET_DATA(pins));
@@ -641,7 +644,12 @@ static int do_command(char *line)
         }
     } else if (!strcmp(argv[0], "profile") && argc > 1) {
         /* profile on | profile FILE: write "bank:pc count" lines */
-        if (!strcmp(argv[1], "on")) {
+        if (!strcmp(argv[1], "farcall") && argc > 2) {
+            /* count far calls: ARG is the address of "jp (iy)" in farcall.s */
+            ti.fc_addr = strtoul(argv[2], NULL, 0);
+            if (!ti.fc_hist)
+                ti.fc_hist = calloc(256u << 16, sizeof(uint32_t));
+        } else if (!strcmp(argv[1], "on")) {
             if (!ti.prof)
                 ti.prof = calloc(256u << 16, sizeof(uint32_t));
             ti.profiling = 1;
@@ -654,6 +662,12 @@ static int do_command(char *line)
                 for (uint32_t i = 0; i < (256u << 16); i++)
                     if (ti.prof[i])
                         fprintf(f, "%02X:%04X %u\n", i >> 16, i & 0xFFFF, ti.prof[i]);
+                if (ti.fc_hist) {
+                    for (uint32_t i = 0; i < (256u << 16); i++)
+                        if (ti.fc_hist[i])
+                            fprintf(f, "F %02X:%04X %u\n", i >> 16, i & 0xFFFF, ti.fc_hist[i]);
+                    memset(ti.fc_hist, 0, (256u << 16) * sizeof(uint32_t));
+                }
                 fclose(f);
             }
         }

@@ -217,7 +217,7 @@ static uint8_t app_key(uint8_t k)
 void main(void)
 {
     uint8_t k, ui_div = 0;
-    uint32_t now, next_ui = 0;
+    uint32_t now, next_ui = 0, next_poll = 0;
     port_int_id = 0x00;                 /* map mode 0, timer 1 at 512 Hz */
     port_int_mask = INT_ON | INT_TIMER1 | INT_POWER;
     __asm__("ei");
@@ -237,14 +237,19 @@ void main(void)
     con_puts("connect USB to a PC\nAPPS: web browser, SSH\n");
     for (;;) {
         lwip_service_events();
-        usb_log_print();
-        demo_poll();
-        app_poll();
-        tls84_poll();
-        kx_poll();
-        browser_poll();
-        ssh_poll();
         now = k_now_ms();
+        /* the rest every 10 ms: each of these is a far call, and the loop
+         * spins a few hundred times a second while packets flow */
+        if ((int32_t)(now - next_poll) >= 0) {
+            next_poll = now + 10;
+            usb_log_print();
+            demo_poll();
+            app_poll();
+            tls84_poll();
+            kx_poll();
+            browser_poll();
+            ssh_poll();
+        }
         if ((int32_t)(now - next_ui) >= 0) {
             next_ui = now + 20;
             k = kbd_get();

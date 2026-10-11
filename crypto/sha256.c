@@ -129,20 +129,54 @@ void sha256(const void *data, size_t len, uint8_t out[32])
     sha256_final(&c, out);
 }
 
+/* The states after the ipad and opad blocks depend only on the key; the
+ * TLS 1.3 key schedule derives several values from each secret, so the two
+ * most recent keys are cached (saves 2 of the 4 compressions per HMAC). */
+#define HMAC_CACHE 2
+static struct {
+    uint8_t key[32];
+    uint8_t valid;
+    uint32_t ih[8], oh[8];
+} hcache[HMAC_CACHE];
+static uint8_t hcache_next;
+
 void hmac_sha256_init(hmac_sha256_ctx *c, const uint8_t *key, size_t keylen)
 {
     uint8_t k[64], i;
+    if (keylen == 32) {
+        for (i = 0; i < HMAC_CACHE; i++) {
+            if (hcache[i].valid && !memcmp(hcache[i].key, key, 32)) {
+                memcpy(c->inner.h, hcache[i].ih, 32);
+                memcpy(c->outer, hcache[i].oh, 32);
+                c->inner.len_lo = 64;
+                c->inner.len_hi = 0;
+                c->inner.n = 0;
+                return;
+            }
+        }
+    }
     memset(k, 0, 64);
     if (keylen > 64)
         sha256(key, keylen, k);
     else
         memcpy(k, key, keylen);
-    for (i = 0; i < 64; i++) {
-        c->okey[i] = k[i] ^ 0x5c;
-        k[i] ^= 0x36;
-    }
+    for (i = 0; i < 64; i++)
+        k[i] ^= 0x5c;
     sha256_init(&c->inner);
     sha256_update(&c->inner, k, 64);
+    memcpy(c->outer, c->inner.h, 32);
+    for (i = 0; i < 64; i++)
+        k[i] ^= 0x5c ^ 0x36;
+    sha256_init(&c->inner);
+    sha256_update(&c->inner, k, 64);
+    if (keylen == 32) {
+        i = hcache_next;
+        hcache_next = (hcache_next + 1) % HMAC_CACHE;
+        memcpy(hcache[i].key, key, 32);
+        memcpy(hcache[i].ih, c->inner.h, 32);
+        memcpy(hcache[i].oh, c->outer, 32);
+        hcache[i].valid = 1;
+    }
 }
 
 void hmac_sha256_update(hmac_sha256_ctx *c, const void *data, size_t len)
@@ -154,8 +188,10 @@ void hmac_sha256_final(hmac_sha256_ctx *c, uint8_t out[32])
 {
     uint8_t ih[32];
     sha256_final(&c->inner, ih);
-    sha256_init(&c->inner);
-    sha256_update(&c->inner, c->okey, 64);
+    memcpy(c->inner.h, c->outer, 32);
+    c->inner.len_lo = 64;
+    c->inner.len_hi = 0;
+    c->inner.n = 0;
     sha256_update(&c->inner, ih, 32);
     sha256_final(&c->inner, out);
 }
