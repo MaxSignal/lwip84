@@ -4,7 +4,7 @@
  *
  *   ti84link info               show OS/boot versions
  *   ti84link backup DIR         save every variable and Flash app into DIR
- *   ti84link romdump FILE       dump the whole flash (takes several minutes)
+ *   ti84link romdump FILE [DUMPER.8xp]  dump the whole flash (takes several minutes)
  *   ti84link check FILE.8xu     parse an OS upgrade (no calculator needed)
  *   ti84link sendos FILE.8xu    send an OS upgrade (refused for boot code
  *                               1.03 and newer unless --force is given)
@@ -71,9 +71,20 @@ static void close_calc(void)
     if (calc) {
         ticalcs_cable_detach(calc);
         ticalcs_handle_del(calc);
+        calc = NULL;
     }
-    if (cable)
+    if (cable) {
         ticables_handle_del(cable);
+        cable = NULL;
+    }
+}
+
+/* after a failed transfer the DUSB session is out of step: start over */
+static int reopen_calc(void)
+{
+    close_calc();
+    g_usleep(1000000);
+    return open_calc();
 }
 
 static int get_info(CalcInfos *ci)
@@ -114,9 +125,17 @@ static int recv_tree(GNode *tree, const char *dir, int apps)
         GNode *folder = g_node_nth_child(tree, i);
         for (unsigned j = 0; j < g_node_n_children(folder); j++) {
             VarEntry *ve = (VarEntry *)g_node_nth_child(folder, j)->data;
-            char *name = tifiles_build_filename(model, ve);
-            char *path = g_build_filename(dir, name, NULL);
+            char *name, *path;
             int err;
+            /* window/zoom/table settings: TI-OS 2.x does not answer requests
+             * for them over USB (and they are not user data) */
+            if (!apps && (ve->type == TI84p_WINDW || ve->type == TI84p_ZSTO ||
+                          ve->type == TI84p_TABLE)) {
+                printf("  (skipping settings variable %s)\n", ve->name);
+                continue;
+            }
+            name = tifiles_build_filename(model, ve);
+            path = g_build_filename(dir, name, NULL);
             printf("  %s ... ", name);
             fflush(stdout);
             if (apps)
@@ -126,6 +145,8 @@ static int recv_tree(GNode *tree, const char *dir, int apps)
             if (err) {
                 printf("FAILED (%d)\n", err);
                 failures++;
+                if (reopen_calc())
+                    return failures + 1000;
             } else {
                 printf("ok\n");
             }
@@ -154,9 +175,23 @@ static int cmd_backup(const char *dir)
         fclose(f);
     }
     g_free(p);
-    if ((err = ticalcs_calc_get_dirlist(calc, &vars, &apps)))
-        return fail("directory listing", err);
+    /* TI-OS 2.x needs a moment after the version request, and a fresh
+     * session avoids a stuck listing */
+    if (reopen_calc())
+        return 1;
+    for (int tries = 0;; tries++) {
+        if (!(err = ticalcs_calc_get_dirlist(calc, &vars, &apps)))
+            break;
+        if (tries == 2)
+            return fail("directory listing", err);
+        fprintf(stderr, "ti84link: listing failed (%d), retrying\n", err);
+        if (reopen_calc())
+            return 1;
+    }
     printf("%u variables, %u apps\n", ticalcs_dirlist_ve_count(vars), ticalcs_dirlist_ve_count(apps));
+    /* the first request after a listing times out on TI-OS 2.21 */
+    if (reopen_calc())
+        return 1;
     failures = recv_tree(vars, dir, 0);
     failures += recv_tree(apps, dir, 1);
     ticalcs_dirlist_destroy(&vars);
@@ -169,12 +204,19 @@ static int cmd_backup(const char *dir)
     return 0;
 }
 
-static int cmd_romdump(const char *file)
+static int cmd_romdump(const char *file, const char *dumper)
 {
     int err;
     printf("sending the dumper, keep the calculator on the home screen...\n");
-    if ((err = ticalcs_calc_dump_rom_1(calc)))
+    if (dumper) {
+        /* send the dumper program (ROMDUMP.8xp from tilibs) as a normal variable */
+        if ((err = ticalcs_calc_send_var2(calc, MODE_NORMAL, dumper)))
+            return fail("dumper upload", err);
+        if (reopen_calc())
+            return 1;
+    } else if ((err = ticalcs_calc_dump_rom_1(calc))) {
         return fail("dumper upload", err);
+    }
     printf("dumping (several minutes)...\n");
     if ((err = ticalcs_calc_dump_rom_2(calc, ROMSIZE_AUTO, file)))
         return fail("ROM dump", err);
@@ -246,7 +288,7 @@ int main(int argc, char **argv)
     else if (!strcmp(argv[1], "backup") && argc > 2)
         rc = cmd_backup(argv[2]);
     else if (!strcmp(argv[1], "romdump") && argc > 2)
-        rc = cmd_romdump(argv[2]);
+        rc = cmd_romdump(argv[2], argc > 3 ? argv[3] : NULL);
     else if (!strcmp(argv[1], "sendos") && argc > 2)
         rc = cmd_sendos(argv[2], argc > 3 && !strcmp(argv[3], "--force"));
     else {

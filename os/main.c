@@ -3,7 +3,7 @@
  * Keys:  Y= status        WINDOW ping gateway    ZOOM DNS lookup
  *        TRACE HTTP GET   GRAPH TCP echo (gateway:8084)
  *        MODE SNTP sync   STAT show time   VARS download test (gateway:8085)
- *        CLEAR clear      2nd+ON power off
+ *        CLEAR clear      UP/DOWN scroll back   2nd+ON power off
  */
 #include <string.h>
 #include "hw.h"
@@ -116,6 +116,7 @@ void main(void)
     con_puts("connect USB to a PC\n");
     for (;;) {
         lwip_service_events();
+        usb_log_print();
         demo_poll();
         app_poll();
         now = k_now_ms();
@@ -166,6 +167,12 @@ void main(void)
             break;
         case K_CLEAR:
             con_clear();
+            break;
+        case K_UP:
+            con_scroll(1);
+            break;
+        case K_DOWN:
+            con_scroll(-1);
             break;
         }
         if (k != K_NONE && k != K_2ND)

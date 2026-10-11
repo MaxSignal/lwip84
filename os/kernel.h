@@ -28,6 +28,7 @@ void con_puts(const char *s);
 void con_printf(const char *fmt, ...);
 void con_flush(void);            /* push console changes to the LCD */
 void con_status(const char *s);  /* inverted status line at the top */
+void con_scroll(int8_t d);       /* scroll back (d > 0) or forward */
 
 /* keypad */
 enum {

@@ -73,15 +73,35 @@ extern volatile uint8_t usb_irq_masked;
 extern uint32_t usb_last_activity;  /* k_now_ms() of the last packet moved */
 void usb_isr(void);
 
+/* endpoint 0 packet size: 8 works with any FIFO size the controller has */
+#define EP0_SIZE 8
+#define USB_NTB_OUT_MAX 2048            /* host -> calculator */
+#define USB_NTB_IN_MAX  2048            /* calculator -> host */
+
+/* event log filled by the interrupt-driven core, printed by usb_log_print() */
+enum { USB_LOG_SETUP = 1, USB_LOG_RESET, USB_LOG_ADDRESS, USB_LOG_VBUS_LOST };
+struct usb_log_entry {
+    uint8_t kind, result;
+    uint8_t data[8];
+};
+#define USB_LOG_SIZE 16
+extern struct usb_log_entry usb_log_ring[USB_LOG_SIZE];
+extern volatile uint8_t usb_log_head, usb_log_tail;
+void usb_log_print(void);
+
 /* device state */
 enum { USB_OFF, USB_WAIT_HOST, USB_DEFAULT, USB_ADDRESS, USB_CONFIGURED };
 extern uint8_t usb_state;
 extern uint8_t usb_alt;             /* NCM data interface alternate setting */
+extern volatile uint8_t usb_alt_changed;
+extern uint16_t usb_ntb_in_size;    /* set by the host (SET_NTB_INPUT_SIZE) */
 extern uint8_t usb_last_error;
 
 void usb_start(void);
 void usb_stop(void);
-void usb_poll(void);
+void usb_poll(void);                 /* main loop: EP0 + NCM data path */
+void usb_service(uint8_t tick);      /* EP0 core, interrupts disabled (ISR) */
+void usb_reset_state(void);
 
 /* endpoints used by the NCM function */
 #define EP_BULK      1              /* 0x81 bulk IN, 0x01 bulk OUT */
@@ -91,8 +111,6 @@ void usb_poll(void);
 /* ncm.c: called by usb.c */
 void ncm_reset(void);
 void ncm_enable(uint8_t on);
-uint8_t ncm_class_request(const uint8_t *setup, uint8_t **reply, uint16_t *len);
-uint8_t ncm_class_out(const uint8_t *setup, const uint8_t *data, uint16_t len);
 void ncm_poll(void);
 extern const uint8_t ncm_host_mac[6];
 #endif

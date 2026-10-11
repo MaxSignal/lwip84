@@ -54,6 +54,7 @@ void isr(void)
     }
     if ((port_usb_int & 0x14) != 0x14)
         usb_irq();
+    usb_service(id & INT_TIMER1);
 }
 
 uint32_t k_now_ms(void)

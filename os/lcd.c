@@ -8,7 +8,9 @@ extern const uint8_t font3x5[95][5];
 uint8_t lcd_buf[768];          /* 64 rows x 12 bytes, MSB = leftmost pixel */
 static uint8_t con_x, con_y;
 static uint8_t con_dirty;
-static char con_text[CON_ROWS][CON_COLS];
+#define CON_HIST 32             /* lines kept for scrolling back */
+static char con_text[CON_HIST][CON_COLS];
+static uint8_t con_view;          /* lines scrolled back from the bottom */
 static char con_stat[CON_COLS + 1];
 
 /* The LCD driver needs about 10 us between accesses.  A fixed delay works
@@ -106,10 +108,13 @@ static void con_redraw(void)
     lcd_clear();
     lcd_draw_text(1, 1, con_stat);
     lcd_invert_rect(0, 0, 96, 7);
-    for (r = 0; r < CON_ROWS; r++)
+    int8_t top = (int8_t)con_y - (CON_ROWS - 1) - con_view;
+    if (top < 0)
+        top = 0;
+    for (r = 0; r < CON_ROWS && top + r < CON_HIST; r++)
         for (c = 0; c < CON_COLS; c++)
-            if (con_text[r][c] != ' ')
-                lcd_draw_char(c * 4, r * 6 + 9, con_text[r][c]);
+            if (con_text[top + r][c] != ' ')
+                lcd_draw_char(c * 4, r * 6 + 9, con_text[top + r][c]);
 }
 
 void con_status(const char *s)
@@ -123,6 +128,7 @@ void con_clear(void)
 {
     memset(con_text, ' ', sizeof(con_text));
     con_x = con_y = 0;
+    con_view = 0;
     con_dirty = 1;
 }
 
@@ -144,10 +150,10 @@ void con_putc(char c)
             con_x = 0;
             con_y++;
         }
-        if (con_y >= CON_ROWS) {
-            memmove(con_text[0], con_text[1], (CON_ROWS - 1) * CON_COLS);
-            memset(con_text[CON_ROWS - 1], ' ', CON_COLS);
-            con_y = CON_ROWS - 1;
+        if (con_y >= CON_HIST) {
+            memmove(con_text[0], con_text[1], (CON_HIST - 1) * CON_COLS);
+            memset(con_text[CON_HIST - 1], ' ', CON_COLS);
+            con_y = CON_HIST - 1;
         }
         con_text[con_y][con_x++] = c;
         con_dirty = 1;
@@ -156,10 +162,10 @@ void con_putc(char c)
     if (con_x >= CON_COLS) {
         con_x = 0;
         con_y++;
-        if (con_y >= CON_ROWS) {
-            memmove(con_text[0], con_text[1], (CON_ROWS - 1) * CON_COLS);
-            memset(con_text[CON_ROWS - 1], ' ', CON_COLS);
-            con_y = CON_ROWS - 1;
+        if (con_y >= CON_HIST) {
+            memmove(con_text[0], con_text[1], (CON_HIST - 1) * CON_COLS);
+            memset(con_text[CON_HIST - 1], ' ', CON_COLS);
+            con_y = CON_HIST - 1;
             con_dirty = 1;
         }
     }
@@ -179,6 +185,23 @@ void con_printf(const char *fmt, ...)
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     con_puts(buf);
+}
+
+/* UP/DOWN: look at older lines */
+void con_scroll(int8_t d)
+{
+    int8_t v = (int8_t)con_view + d;
+    int8_t max = (int8_t)con_y - (CON_ROWS - 1);
+    if (max < 0)
+        max = 0;
+    if (v < 0)
+        v = 0;
+    if (v > max)
+        v = max;
+    if (v != (int8_t)con_view) {
+        con_view = v;
+        con_dirty = 1;
+    }
 }
 
 void con_flush(void)

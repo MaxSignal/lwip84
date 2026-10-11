@@ -1,13 +1,16 @@
-/* usb.c - USB peripheral driver: controller power-up, endpoint 0, descriptors.
+/* usb.c - USB peripheral core: endpoint 0, descriptors, class requests.
  *
  * The TI-84 Plus has a Mentor Graphics MUSBFDRC full-speed OTG controller at
  * ports 80h-AFh (register layout of the MUSB "HDRC" family; see usb.h) plus
  * TI glue logic at ports 4Ah-5Bh.  The calculator is a bus device with one
  * CDC-NCM function (ncm.c).
  *
- * The driver works by polling the CSR registers from the main loop; the
- * interrupt handler only latches the read-to-clear event registers (needed
- * to see the end of a SET_ADDRESS status stage) and wakes the CPU.
+ * Page 0 module: usb_service() runs from the interrupt handler (USB interrupt
+ * or, at the latest, the next 512 Hz timer tick), so control transfers are
+ * answered within about 2 ms even while the main loop redraws the LCD.  A
+ * host gives a device only ~10 ms after SET_ADDRESS before it uses the new
+ * address.  Nothing here may call banked code.  Power-up/shutdown and the
+ * debug log printer are in usb_ctl.c.
  */
 #include <string.h>
 #include "hw.h"
@@ -16,10 +19,12 @@
 
 uint8_t usb_state;
 uint8_t usb_alt;
+volatile uint8_t usb_alt_changed;
 uint8_t usb_last_error;
 uint32_t usb_last_activity;
+uint16_t usb_ntb_in_size = USB_NTB_IN_MAX;
 static uint8_t usb_config;
-static uint32_t usb_next_check;
+static uint8_t check_div;
 
 /* ------------------------------------------------------------------ */
 /* descriptors                                                         */
@@ -30,7 +35,7 @@ static uint32_t usb_next_check;
 static const uint8_t dev_desc[18] = {
     18, 1, 0x00, 0x02,          /* USB 2.0 */
     0x02, 0x00, 0x00,           /* CDC device class */
-    64,                         /* EP0 max packet size */
+    EP0_SIZE,                   /* EP0 max packet size */
     VID & 0xFF, VID >> 8, PID & 0xFF, PID >> 8,
     0x00, 0x01,                 /* bcdDevice 1.00 */
     1, 2, 3,                    /* manufacturer, product, serial strings */
@@ -66,6 +71,40 @@ static const char *const strings[] = {
  * ncm_dev_mac, which differs in the last byte */
 const uint8_t ncm_host_mac[6] = {0x02, 0x84, 0x84, 0x00, 0x00, 0x01};
 
+/* CDC-NCM GET_NTB_PARAMETERS reply */
+static const uint8_t ntb_params[28] = {
+    28, 0,                      /* wLength */
+    0x01, 0x00,                 /* NTB16 only */
+    USB_NTB_IN_MAX & 0xFF, USB_NTB_IN_MAX >> 8, 0, 0,
+    4, 0,                       /* wNdpInDivisor */
+    0, 0,                       /* wNdpInPayloadRemainder */
+    4, 0,                       /* wNdpInAlignment */
+    0, 0,
+    USB_NTB_OUT_MAX & 0xFF, USB_NTB_OUT_MAX >> 8, 0, 0,
+    4, 0,                       /* wNdpOutDivisor */
+    0, 0,                       /* wNdpOutPayloadRemainder */
+    4, 0,                       /* wNdpOutAlignment */
+    8, 0,                       /* wNtbOutMaxDatagrams */
+};
+
+/* ------------------------------------------------------------------ */
+/* event log for the debug console (filled here, printed by usb_ctl.c) */
+
+struct usb_log_entry usb_log_ring[USB_LOG_SIZE];
+volatile uint8_t usb_log_head, usb_log_tail;
+
+static void log_event(uint8_t kind, const uint8_t *data, uint8_t result)
+{
+    struct usb_log_entry *e = &usb_log_ring[usb_log_head % USB_LOG_SIZE];
+    e->kind = kind;
+    e->result = result;
+    if (data)
+        memcpy(e->data, data, 8);
+    usb_log_head++;
+    if ((uint8_t)(usb_log_head - usb_log_tail) > USB_LOG_SIZE)
+        usb_log_tail = usb_log_head - USB_LOG_SIZE;
+}
+
 /* ------------------------------------------------------------------ */
 /* endpoint 0                                                          */
 
@@ -78,12 +117,17 @@ static uint16_t in_len;
 static uint8_t in_zlp;
 static uint16_t out_len, out_pos;
 static uint8_t pending_addr;     /* 0x80 | address while waiting for the status stage */
-static uint32_t status_since;
+static uint16_t status_ticks;    /* timer ticks spent waiting for the status stage */
 
 #define REQ_STALL 0
 #define REQ_NODATA 1
 #define REQ_IN 2
 #define REQ_OUT 3
+
+static uint16_t rd16(const uint8_t *p)
+{
+    return p[0] | ((uint16_t)p[1] << 8);
+}
 
 static uint8_t string_desc(uint8_t idx)
 {
@@ -142,10 +186,16 @@ static void ep_setup_hw(void)
     port_usb_index = 0;
 }
 
+static void set_alt(uint8_t alt)
+{
+    usb_alt = alt;
+    usb_alt_changed = 1;                /* ncm_poll() picks this up */
+}
+
 static uint8_t std_request(void)
 {
     uint8_t rt = setup[0], req = setup[1];
-    uint16_t val = setup[2] | (setup[3] << 8);
+    uint16_t val = rd16(setup + 2);
     uint8_t idx = setup[4];
 
     switch (req) {
@@ -203,8 +253,7 @@ static uint8_t std_request(void)
         if (val > 1)
             return REQ_STALL;
         usb_config = val;
-        usb_alt = 0;
-        ncm_enable(0);
+        set_alt(0);
         if (val) {
             ep_setup_hw();
             usb_state = USB_CONFIGURED;
@@ -225,9 +274,8 @@ static uint8_t std_request(void)
         if (idx == 0)
             return val == 0 ? REQ_NODATA : REQ_STALL;
         if (idx == 1 && val <= 1) {
-            usb_alt = val;
             ep_setup_hw();
-            ncm_enable(val);
+            set_alt(val);
             return REQ_NODATA;
         }
         return REQ_STALL;
@@ -235,23 +283,79 @@ static uint8_t std_request(void)
     return REQ_STALL;
 }
 
+/* CDC-NCM class requests to the control interface */
+static uint8_t class_in(void)
+{
+    switch (setup[1]) {
+    case 0x80: /* GET_NTB_PARAMETERS */
+        in_ptr = ntb_params;
+        in_len = sizeof(ntb_params);
+        return REQ_IN;
+    case 0x83: /* GET_NTB_FORMAT */
+    case 0x89: /* GET_CRC_MODE */
+        ep0_buf[0] = ep0_buf[1] = 0;
+        in_len = 2;
+        break;
+    case 0x85: /* GET_NTB_INPUT_SIZE */
+        ep0_buf[0] = usb_ntb_in_size;
+        ep0_buf[1] = usb_ntb_in_size >> 8;
+        ep0_buf[2] = ep0_buf[3] = 0;
+        in_len = 4;
+        break;
+    case 0x87: /* GET_MAX_DATAGRAM_SIZE */
+        ep0_buf[0] = 1514 & 0xFF;
+        ep0_buf[1] = 1514 >> 8;
+        in_len = 2;
+        break;
+    default:
+        return REQ_STALL;
+    }
+    in_ptr = ep0_buf;
+    return REQ_IN;
+}
+
+static uint8_t class_out(const uint8_t *data, uint16_t len)
+{
+    uint16_t val = rd16(setup + 2);
+    switch (setup[1]) {
+    case 0x43: /* SET_ETHERNET_PACKET_FILTER: everything is delivered anyway */
+    case 0x88: /* SET_MAX_DATAGRAM_SIZE */
+        return 1;
+    case 0x84: /* SET_NTB_FORMAT */
+    case 0x8A: /* SET_CRC_MODE */
+        return val == 0;
+    case 0x86: /* SET_NTB_INPUT_SIZE */
+        if (len < 4 || !data)
+            return 0;
+        if (rd16(data + 2) == 0 && rd16(data) < USB_NTB_IN_MAX) {
+            if (rd16(data) < 2048)
+                return 0;               /* NCM requires at least 2048 */
+            usb_ntb_in_size = rd16(data);
+        } else {
+            usb_ntb_in_size = USB_NTB_IN_MAX;
+        }
+        return 1;
+    }
+    return 0;
+}
+
 static void ep0_send_next(void)
 {
-    uint8_t n = in_len > 64 ? 64 : in_len;
+    uint8_t n = in_len > EP0_SIZE ? EP0_SIZE : in_len;
     uint8_t csr = CSR0_TXPKTRDY;
     if (n) {
-        memcpy(ep0_buf, in_ptr, n);      /* constants may live in any page */
+        memcpy(ep0_buf, in_ptr, n);
         USB_WRITE(0, ep0_buf, n);
     }
     in_ptr += n;
     in_len -= n;
     if (in_len == 0) {
-        if (n == 64 && in_zlp) {
+        if (n == EP0_SIZE && in_zlp) {
             in_zlp = 0;                  /* a zero-length packet follows */
         } else {
             csr |= CSR0_DATAEND;
             ep0_state = EP0_STATUS;
-            status_since = k_now_ms();
+            status_ticks = 0;
         }
     }
     port_usb_csr0 = csr;
@@ -260,27 +364,21 @@ static void ep0_send_next(void)
 static void ep0_setup(void)
 {
     uint8_t r;
-    uint16_t wlen = setup[6] | (setup[7] << 8);
-    uint8_t *reply;
-    uint16_t rlen;
+    uint16_t wlen = rd16(setup + 6);
 
     if ((setup[0] & 0x60) == 0x00) {
         r = std_request();
     } else if ((setup[0] & 0x60) == 0x20 && (setup[0] & 0x1F) == 1) {
-        if (setup[0] & 0x80) {
-            r = ncm_class_request(setup, &reply, &rlen) ? REQ_IN : REQ_STALL;
-            in_ptr = reply;
-            in_len = rlen;
-        } else if (wlen == 0) {
-            r = ncm_class_out(setup, NULL, 0) ? REQ_NODATA : REQ_STALL;
-        } else {
+        if (setup[0] & 0x80)
+            r = class_in();
+        else if (wlen == 0)
+            r = class_out(NULL, 0) ? REQ_NODATA : REQ_STALL;
+        else
             r = wlen <= sizeof(ep0_buf) ? REQ_OUT : REQ_STALL;
-        }
     } else {
         r = REQ_STALL;
     }
-    dbg_printf("usb: setup %02x %02x %02x%02x %02x%02x %u -> %u\n", setup[0], setup[1],
-               setup[3], setup[2], setup[5], setup[4], wlen, r);
+    log_event(USB_LOG_SETUP, setup, r);
 
     switch (r) {
     case REQ_STALL:
@@ -290,12 +388,12 @@ static void ep0_setup(void)
     case REQ_NODATA:
         port_usb_csr0 = CSR0_SVDRXPKTRDY | CSR0_DATAEND;
         ep0_state = EP0_STATUS;
-        status_since = k_now_ms();
+        status_ticks = 0;
         break;
     case REQ_IN:
         if (in_len > wlen)
             in_len = wlen;
-        in_zlp = in_len < wlen && (in_len & 63) == 0;
+        in_zlp = in_len < wlen && (in_len % EP0_SIZE) == 0;
         port_usb_csr0 = CSR0_SVDRXPKTRDY;
         ep0_state = EP0_IN;
         ep0_send_next();
@@ -318,10 +416,10 @@ static void ep0_rx(void)
         USB_READ(0, ep0_buf + out_pos, n);
         out_pos += n;
         if (out_pos >= out_len) {
-            if (ncm_class_out(setup, ep0_buf, out_len)) {
+            if (class_out(ep0_buf, out_len)) {
                 port_usb_csr0 = CSR0_SVDRXPKTRDY | CSR0_DATAEND;
                 ep0_state = EP0_STATUS;
-                status_since = k_now_ms();
+                status_ticks = 0;
             } else {
                 port_usb_csr0 = CSR0_SVDRXPKTRDY | CSR0_SENDSTALL;
                 ep0_state = EP0_IDLE;
@@ -341,102 +439,49 @@ static void ep0_rx(void)
     ep0_setup();
 }
 
-/* ------------------------------------------------------------------ */
-/* controller power                                                    */
-
-static uint8_t wait_port(uint8_t port_sel, uint8_t mask, uint8_t want, uint16_t ms)
+static void reset_function(void)
 {
-    uint32_t end = k_now_ms() + ms;
-    for (;;) {
-        uint8_t v = port_sel ? port_usb_lines : port_usb_status;
-        if ((v & mask) == want)
-            return 1;
-        if ((int32_t)(k_now_ms() - end) >= 0)
-            return 0;
-    }
-}
-
-void usb_stop(void)
-{
-    port_usb_proto_ie = 0;
-    port_usb_status = 0x00;
-    port_usb_ctrl = 0x02;               /* controller and 48 MHz crystal off */
-    usb_state = USB_OFF;
-    ncm_enable(0);
-}
-
-void usb_start(void)
-{
-    usb_last_error = 0;
-    usb_stop();
-    port_usb_line_mask = 0;
-    port_usb_pull = 0x20;               /* default pull-down setting */
-    port_usb_vpwr = 0x00;               /* we never drive VBus */
-    usb_ev_tx = usb_ev_rx = usb_ev_bus = 0;
-    port_usb_ctrl = 0x00;
-    k_delay_ms(5);
-    if (port_gpio & 0x08)               /* older hardware revision */
-        port_usb_ctrl = 0x44;
-    port_usb_ctrl = 0xC4;
-    if (!wait_port(0, 0xBF, 0x12, 200)) {
-        usb_last_error = 1;             /* controller did not come up */
-        dbg_printf("usb: 4C=%02x after power-up\n", port_usb_status);
-    }
-    port_usb_status = 0x08;
-    if (!wait_port(0, 0x08, 0x08, 200))
-        usb_last_error = 2;
-    port_usb_faddr = 0;
-    port_usb_intrtxe = 0x01 | (1 << EP_BULK) | (1 << EP_NOTIFY);
-    port_usb_intrrxe = 1 << EP_BULK;
-    port_usb_intrusbe = 0x05;           /* suspend + reset, as TI-OS in peripheral mode */
-    ep0_state = EP0_IDLE;
     pending_addr = 0;
+    ep0_state = EP0_IDLE;
     usb_config = 0;
-    usb_alt = 0;
-    ncm_reset();
-    usb_state = USB_WAIT_HOST;
-    port_usb_proto_ie = 1;
-    dbg_printf("usb: started, 4C=%02x 4D=%02x 54=%02x 8F=%02x err=%u\n", port_usb_status,
-               port_usb_lines, port_usb_ctrl, port_usb_devctl, usb_last_error);
+    set_alt(0);
 }
 
-void usb_poll(void)
+void usb_reset_state(void)
 {
-    uint8_t tx, bus, csr;
+    reset_function();
+    usb_ntb_in_size = USB_NTB_IN_MAX;
+    usb_log_head = usb_log_tail = 0;
+}
+
+/* Called with interrupts disabled: from the ISR, or from usb_poll(). */
+void usb_service(uint8_t tick)
+{
+    uint8_t tx, bus, csr, saved_index;
     if (usb_state == USB_OFF)
         return;
-    __asm__("di");
     tx = usb_ev_tx;
     bus = usb_ev_bus;
     usb_ev_tx = 0;
     usb_ev_bus = 0;
-    __asm__("ei");
+    saved_index = port_usb_index;       /* ncm.c may be using another endpoint */
 
-    /* every 100 ms: cable/VBus check and re-arming of masked interrupts */
-    if ((int32_t)(k_now_ms() - usb_next_check) >= 0) {
-        usb_next_check = k_now_ms() + 100;
+    if (tick && ++check_div >= 51) {    /* every 100 ms */
+        check_div = 0;
         if (usb_irq_masked) {
             usb_irq_masked = 0;
             port_usb_proto_ie = 1;
         }
         if (!(port_usb_lines & 0x40) && usb_state > USB_WAIT_HOST) {
-            dbg_printf("usb: VBus lost\n");
-            ep0_state = EP0_IDLE;
-            pending_addr = 0;
-            usb_config = 0;
-            usb_alt = 0;
-            ncm_enable(0);
+            log_event(USB_LOG_VBUS_LOST, NULL, 0);
+            reset_function();
             usb_state = USB_WAIT_HOST;
         }
     }
     if (bus & 0x04) {                   /* bus reset */
-        dbg_printf("usb: bus reset\n");
+        log_event(USB_LOG_RESET, NULL, 0);
         port_usb_faddr = 0;
-        pending_addr = 0;
-        ep0_state = EP0_IDLE;
-        usb_config = 0;
-        usb_alt = 0;
-        ncm_enable(0);
+        reset_function();
         usb_state = USB_DEFAULT;
     }
 
@@ -450,27 +495,37 @@ void usb_poll(void)
         port_usb_csr0 = CSR0_SVDSETUPEND;
         ep0_state = EP0_IDLE;
     }
-    if (ep0_state == EP0_STATUS && !(csr & CSR0_DATAEND)) {
-        /* status stage finished: an EP0 interrupt arrived, or (fallback)
-         * the host has had a few milliseconds to complete it */
-        if ((tx & 1) || (csr & CSR0_RXPKTRDY) || (uint32_t)(k_now_ms() - status_since) > 50) {
+    if (ep0_state == EP0_STATUS) {
+        /* the status stage is over when the next EP0 interrupt arrives (or a
+         * new SETUP); as a fallback, after 10 ticks (~20 ms) */
+        if (tick)
+            status_ticks++;
+        if ((tx & 1) || (csr & CSR0_RXPKTRDY) || status_ticks > 10) {
             ep0_state = EP0_IDLE;
             if (pending_addr) {
                 port_usb_faddr = pending_addr & 0x7F;
                 usb_state = (pending_addr & 0x7F) ? USB_ADDRESS : USB_DEFAULT;
-                dbg_printf("usb: address %u\n", pending_addr & 0x7F);
+                log_event(USB_LOG_ADDRESS, &pending_addr, (tx & 1) ? 1 : (csr & 1) ? 2 : 3);
                 pending_addr = 0;
             }
         }
     }
     if (csr & CSR0_RXPKTRDY) {
-        usb_last_activity = k_now_ms();
         if (usb_state == USB_WAIT_HOST)
             usb_state = USB_DEFAULT;
         ep0_rx();
     } else if (ep0_state == EP0_IN && !(csr & CSR0_TXPKTRDY)) {
         ep0_send_next();
     }
+    port_usb_index = saved_index;
+}
+
+/* main loop entry: run the EP0 state machine now, then the NCM data path */
+void usb_poll(void)
+{
+    __asm__("di");
+    usb_service(0);
+    __asm__("ei");
     if (usb_state == USB_CONFIGURED)
         ncm_poll();
 }

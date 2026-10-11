@@ -79,7 +79,8 @@ static struct {
     uint8_t cx_setup[8];
     uint8_t cx_buf[512];
     int cx_len, cx_pos, cx_want;
-    uint64_t cx_deadline;
+    uint64_t cx_deadline, cx_addr_deadline;
+    int ep0_maxp;          /* host's idea of bMaxPacketSize0 */
     /* bulk IN reassembly (device -> host) */
     uint8_t in_xfer[4096];
     int in_len;
@@ -425,6 +426,8 @@ static void cx_start(uint8_t bmrt, uint8_t breq, uint16_t wval, uint16_t widx, u
     u.cx_status_ok = 0;
     u.cx_phase = CX_SETUP;
     u.cx_deadline = ti.now_ps + 500000000000ULL;
+    /* like a real host: after SET_ADDRESS the device has ~10 ms to switch */
+    u.cx_addr_deadline = ti.now_ps + 10000000000ULL;
     ulog("SETUP %02x %02x %04x %04x %d", bmrt, breq, wval, widx, wlen);
 }
 
@@ -458,8 +461,14 @@ static void cx_step(void)
     }
     switch (u.cx_phase) {
     case CX_SETUP:
-        if (u.faddr != u.addr_dev)
-            break;  /* device does not answer at this address (yet) */
+        if (u.faddr != u.addr_dev) {
+            /* device does not answer at this address (yet) */
+            if (ti.now_ps > u.cx_addr_deadline) {
+                uerr("device not responding at address %d (FADDR=%d): -71", u.addr_dev, u.faddr);
+                cx_finish(0);
+            }
+            break;
+        }
         if (u.csr0 & (CSR0_RXPKTRDY | CSR0_TXPKTRDY)) {
             /* a new SETUP aborts an unfinished transfer */
             u.csr0 |= CSR0_SETUPEND;
@@ -495,13 +504,20 @@ static void cx_step(void)
             u.cx_len += n;
             e->txlen = 0;
             u.csr0 &= ~CSR0_TXPKTRDY;
-            int last = (u.csr0 & CSR0_DATAEND) || n < FIFO || u.cx_len >= u.cx_want;
-            if (last) {
-                u.cx_phase = CX_STATUS;
-                if (!(u.csr0 & CSR0_DATAEND))
-                    ulog("  (IN data stage ended without DataEnd)");
-            }
+            int last = (u.csr0 & CSR0_DATAEND) || n < u.ep0_maxp || u.cx_len >= u.cx_want;
+            if (n > u.ep0_maxp)
+                uerr("EP0 packet of %d bytes, max packet size %d", n, u.ep0_maxp);
             ep0_irq();
+            if (last && !(u.csr0 & CSR0_DATAEND)) {
+                /* host ended the data stage early (short packet): the status
+                 * stage comes before DataEnd, the controller flags SetupEnd */
+                ulog("  (data stage ended early: SetupEnd)");
+                u.csr0 |= CSR0_SETUPEND;
+                cx_finish(1);
+                break;
+            }
+            if (last)
+                u.cx_phase = CX_STATUS;
         }
         break;
     case CX_DATA_OUT:
@@ -542,7 +558,7 @@ static void cx_step(void)
 /* virtual host: enumeration and NCM                                   */
 
 enum {
-    H_IDLE, H_RESET, H_DEVDESC8, H_SETADDR, H_DEVDESC, H_CFG9, H_CFG, H_MACSTR, H_SETCFG,
+    H_IDLE, H_RESET, H_DEVDESC8, H_RESET2, H_SETADDR, H_DEVDESC, H_CFG9, H_CFG, H_MACSTR, H_SETCFG,
     H_NTBPARAM, H_ALT0, H_ALT1, H_RUN, H_FAILED
 };
 
@@ -615,6 +631,7 @@ static void host_step(void)
             ulog("bus reset");
             musb_bus_reset();
             u.addr_dev = 0;
+            u.ep0_maxp = 64;
             u.state = H_RESET;
             u.state_t = ti.now_ps;
         }
@@ -626,6 +643,15 @@ static void host_step(void)
     case H_DEVDESC8:
         if (!ok || u.cx_len < 8)
             return host_fail("GET_DESCRIPTOR(device)");
+        u.ep0_maxp = u.cx_buf[7];
+        ulog("  bMaxPacketSize0 %d", u.ep0_maxp);
+        musb_bus_reset();               /* Linux resets again before SET_ADDRESS */
+        u.state = H_RESET2;
+        u.state_t = ti.now_ps;
+        return;
+    case H_RESET2:
+        if (ti.now_ps - u.state_t < 20000000000ULL)
+            return;
         host_next(H_SETADDR);
         break;
     case H_SETADDR:

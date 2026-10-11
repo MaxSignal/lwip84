@@ -11,8 +11,8 @@
 #include "usb.h"
 #include "ncm.h"
 
-#define NTB_OUT_MAX 2048        /* host -> calculator */
-#define NTB_IN_MAX  2048        /* calculator -> host */
+#define NTB_OUT_MAX USB_NTB_OUT_MAX
+#define NTB_IN_MAX  USB_NTB_IN_MAX
 #define TX_DGRAM_OFS 28         /* NTH16 (12) + NDP16 with one entry and terminator (16) */
 
 const uint8_t ncm_dev_mac[6] = {0x02, 0x84, 0x84, 0x00, 0x00, 0x02};
@@ -26,34 +26,18 @@ static uint16_t rx_ndp, rx_ndp_len, rx_entry;
 static uint16_t tx_len, tx_pos;
 static uint8_t tx_busy, tx_zlp;
 static uint16_t tx_seq;
-static uint16_t ntb_in_size = NTB_IN_MAX;
 static uint8_t enabled;
 static uint8_t notify_state;    /* 0 idle, 1 send connection, 2 send speed, 3 done */
 static uint8_t notify_buf[16];
 
 struct ncm_stats ncm_stats;
 
-static const uint8_t ntb_params[28] = {
-    28, 0,                      /* wLength */
-    0x01, 0x00,                 /* NTB16 only */
-    NTB_IN_MAX & 0xFF, NTB_IN_MAX >> 8, 0, 0,
-    4, 0,                       /* wNdpInDivisor */
-    0, 0,                       /* wNdpInPayloadRemainder */
-    4, 0,                       /* wNdpInAlignment */
-    0, 0,
-    NTB_OUT_MAX & 0xFF, NTB_OUT_MAX >> 8, 0, 0,
-    4, 0,                       /* wNdpOutDivisor */
-    0, 0,                       /* wNdpOutPayloadRemainder */
-    4, 0,                       /* wNdpOutAlignment */
-    8, 0,                       /* wNtbOutMaxDatagrams */
-};
-
-static uint8_t creq[8];
 
 static uint16_t rd16(const uint8_t *p)
 {
     return p[0] | ((uint16_t)p[1] << 8);
 }
+
 
 static void wr16(uint8_t *p, uint16_t v)
 {
@@ -69,7 +53,6 @@ void ncm_reset(void)
     rx_drop = 0;
     tx_busy = 0;
     notify_state = 0;
-    ntb_in_size = NTB_IN_MAX;
 }
 
 void ncm_enable(uint8_t on)
@@ -88,64 +71,6 @@ void ncm_enable(uint8_t on)
 uint8_t ncm_link_up(void)
 {
     return enabled && usb_state == USB_CONFIGURED;
-}
-
-uint8_t ncm_class_request(const uint8_t *setup, uint8_t **reply, uint16_t *len)
-{
-    switch (setup[1]) {
-    case 0x80: /* GET_NTB_PARAMETERS */
-        *reply = (uint8_t *)ntb_params;
-        *len = sizeof(ntb_params);
-        return 1;
-    case 0x83: /* GET_NTB_FORMAT */
-        wr16(creq, 0);
-        *reply = creq;
-        *len = 2;
-        return 1;
-    case 0x85: /* GET_NTB_INPUT_SIZE */
-        wr16(creq, ntb_in_size);
-        wr16(creq + 2, 0);
-        *reply = creq;
-        *len = 4;
-        return 1;
-    case 0x87: /* GET_MAX_DATAGRAM_SIZE */
-        wr16(creq, 1514);
-        *reply = creq;
-        *len = 2;
-        return 1;
-    case 0x89: /* GET_CRC_MODE */
-        wr16(creq, 0);
-        *reply = creq;
-        *len = 2;
-        return 1;
-    }
-    return 0;
-}
-
-uint8_t ncm_class_out(const uint8_t *setup, const uint8_t *data, uint16_t len)
-{
-    uint16_t val = setup[2] | (setup[3] << 8);
-    switch (setup[1]) {
-    case 0x43: /* SET_ETHERNET_PACKET_FILTER: we deliver everything anyway */
-        return 1;
-    case 0x84: /* SET_NTB_FORMAT */
-        return val == 0;
-    case 0x86: /* SET_NTB_INPUT_SIZE */
-        if (len < 4 || !data)
-            return 0;
-        {
-            uint32_t sz = rd16(data) | ((uint32_t)rd16(data + 2) << 16);
-            if (sz < 2048 && sz < NTB_IN_MAX)
-                return 0;           /* NCM requires at least 2048 */
-            ntb_in_size = sz > NTB_IN_MAX ? NTB_IN_MAX : (uint16_t)sz;
-        }
-        return 1;
-    case 0x88: /* SET_MAX_DATAGRAM_SIZE */
-        return 1;
-    case 0x8A: /* SET_CRC_MODE */
-        return val == 0;
-    }
-    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -251,7 +176,7 @@ void ncm_tx_send(uint16_t len)
 {
     uint8_t *b = tx_ntb;
     uint16_t total = TX_DGRAM_OFS + len;
-    if (!enabled || tx_busy || total > ntb_in_size)
+    if (!enabled || tx_busy || total > usb_ntb_in_size)
         return;
     memcpy(b, "NCMH", 4);
     wr16(b + 4, 12);
@@ -267,7 +192,7 @@ void ncm_tx_send(uint16_t len)
     wr16(b + 26, 0);
     tx_len = total;
     tx_pos = 0;
-    tx_zlp = (total & (EP_BULK_SIZE - 1)) == 0 && total < ntb_in_size;
+    tx_zlp = (total & (EP_BULK_SIZE - 1)) == 0 && total < usb_ntb_in_size;
     tx_busy = 1;
     ncm_stats.tx_frames++;
 }
@@ -337,6 +262,10 @@ static void notify_poll(void)
 
 void ncm_poll(void)
 {
+    if (usb_alt_changed) {
+        usb_alt_changed = 0;
+        ncm_enable(usb_alt);
+    }
     if (!enabled)
         return;
     notify_poll();

@@ -46,10 +46,10 @@ CFLAGS  = -mz80 --std-sdcc11 --opt-code-size --constseg CONST $(DEFS) \
           -I include -I os -I ../src/include -I ../src
 
 # modules that must stay in page 0 (interrupt path, runtime)
-COMMON_C = os/isr.c os/far.c
+COMMON_C = os/isr.c os/far.c os/usb.c
 COMMON_S = os/crt0.s os/farcall.s os/usb_ll.s
 # everything else is placed in flash pages 1.. by tools/banker.py
-BANKED_C = os/main.c os/demo.c os/apps.c os/lcd.c os/kbd.c os/fmt.c os/font3x5.c os/usb.c os/ncm.c os/heap.c \
+BANKED_C = os/main.c os/demo.c os/apps.c os/lcd.c os/kbd.c os/fmt.c os/font3x5.c os/usb_ctl.c os/ncm.c os/heap.c \
            port/sys_arch.c port/sntp_time.c port/bytes.c port/imports.c port/netif_ncm.c \
            port/usb_ethernet84.c port/tls_stub.c port/lwip_start84.c \
            $(LWIP_C)
