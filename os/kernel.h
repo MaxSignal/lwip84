@@ -40,9 +40,9 @@ enum {
 uint8_t kbd_scan(void);          /* raw: key currently held, or K_NONE */
 uint8_t kbd_get(void);           /* edge-triggered with auto-repeat, non-blocking */
 
-/* formatting */
-int k_vsnprintf(char *buf, size_t n, const char *fmt, va_list ap);
-int k_snprintf(char *buf, size_t n, const char *fmt, ...);
+/* formatting and heap: see include/ti84p_libc.h */
+#include "ti84p_libc.h"
+void heap_init(void);
 
 /* debug output: emulator console in DEBUG builds, nothing otherwise */
 void dbg_printf(const char *fmt, ...);

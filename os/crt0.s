@@ -95,6 +95,10 @@ isr_entry:
 	ei
 	ret
 
+	;; start of the heap: the _HEAP area is linked after all other data
+	.area	_HEAP
+_heap_base::
+
 	.area	_GSINIT
 gsinit::
 	;; _DATA is already zero (whole RAM cleared above)

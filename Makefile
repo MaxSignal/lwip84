@@ -26,20 +26,39 @@ DEFS    =
 endif
 
 CFLAGS  = -mz80 --std-sdcc11 --opt-code-size --constseg CONST $(DEFS) \
-          -I include -I os -I ../src/include
+          -DLWIP_PORT_TI84P=1 -DLWIP_TLS_FLOOR_BYTES=0u '-D__attribute__(x)=' \
+          -I include -I os -I ../src/include -I ../src
 
 # modules that must stay in page 0 (interrupt path, runtime)
 COMMON_C = os/isr.c
-COMMON_S = os/crt0.s os/farcall.s
+COMMON_S = os/crt0.s os/farcall.s os/usb_ll.s
 # everything else is placed in flash pages 1.. by tools/banker.py
-BANKED_C = os/main.c os/lcd.c os/kbd.c os/fmt.c os/font3x5.c
+BANKED_C = os/main.c os/lcd.c os/kbd.c os/fmt.c os/font3x5.c os/usb.c os/ncm.c os/heap.c \
+           port/sys_arch.c port/sntp_time.c port/bytes.c port/imports.c port/netif_ncm.c \
+           $(LWIP_C)
+
+# lwIP-CE sources shared with the TI-84 Plus CE build
+LWIP_SRC = ../src
+LWIP_C = $(addprefix $(LWIP_SRC)/, \
+           core/init.c core/def.c core/dns.c core/inet_chksum.c core/ip.c core/mem.c \
+           core/memp.c core/netif.c core/pbuf.c core/raw.c core/tcp.c core/tcp_in.c \
+           core/tcp_out.c core/timeouts.c core/udp.c core/stats.c core/sys.c \
+           core/ipv4/dhcp.c core/ipv4/etharp.c core/ipv4/icmp.c core/ipv4/ip4.c \
+           core/ipv4/ip4_addr.c netif/ethernet.c core/logging.c core/app_config.c \
+           drivers/mem.c)
 
 COMMON_ASM = $(patsubst %.c,$(B)/asm/%.asm,$(COMMON_C)) $(patsubst %.s,$(B)/asm/%.asm,$(COMMON_S))
-BANKED_ASM = $(patsubst %.c,$(B)/asm/%.asm,$(BANKED_C))
+BANKED_ASM = $(patsubst $(LWIP_SRC)/%.c,$(B)/asm/lwip/%.asm,$(filter $(LWIP_SRC)/%,$(BANKED_C))) \
+             $(patsubst %.c,$(B)/asm/%.asm,$(filter-out $(LWIP_SRC)/%,$(BANKED_C)))
 
 all: $(B)/lwip84.rom
 
 $(B)/asm/%.asm: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -S $< -o $@
+
+# shared lwIP-CE sources live outside this directory
+$(B)/asm/lwip/%.asm: $(LWIP_SRC)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -S $< -o $@
 

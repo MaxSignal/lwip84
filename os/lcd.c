@@ -169,7 +169,7 @@ void con_printf(const char *fmt, ...)
     char buf[96];
     va_list ap;
     va_start(ap, fmt);
-    k_vsnprintf(buf, sizeof(buf), fmt, ap);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     con_puts(buf);
 }

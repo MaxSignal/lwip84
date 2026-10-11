@@ -3,8 +3,9 @@
 
 The TI-84 Plus maps flash page 0 at 0000h-3FFFh (always present) and one
 switchable flash page ("bank A", port 06h) at 4000h-7FFFh.  This tool takes
-the assembler output of SDCC, places every *banked* module into one of the
-flash pages 1..N (first-fit by size) and rewrites references so that
+the assembler output of SDCC and distributes the *functions* of all banked
+modules over flash pages 1..N (in source order, so that related functions
+stay together).  References are rewritten so that
 
   * calls/jumps to a function in the same page stay direct;
   * calls from another page, and every place where a function address is
@@ -12,16 +13,17 @@ flash pages 1..N (first-fit by size) and rewrites references so that
 
 A thunk switches bank A, calls the real function and switches back.  The
 return bookkeeping lives on a separate "far stack" (see os/farcall.s), so
-the callee sees exactly the stack layout of a direct call and normal SDCC
-calling conventions (register and stack arguments) keep working.
+the callee sees exactly the stack layout of a direct call and the normal
+SDCC calling convention (register and stack arguments, callee cleanup)
+keeps working.
 
-Constant data is expected to be compiled with --constseg CONST and is kept
-in page 0, so pointers to constants stay valid from every bank.
+Constant data must be compiled with --constseg CONST: it stays in page 0,
+so pointers to constants are valid from every bank.
 
 Usage:
-  banker.py --outdir DIR --thunks DIR/thunks.s [--map map.txt]
+  banker.py --outdir DIR --thunks DIR/thunks.s [--map map.txt] [--ldargs f]
             [--bank-size N] [--first-bank N] [--max-bank N]
-            common:FILE.asm ... banked:FILE.asm ... [pin:BANK:FILE.asm]
+            common:FILE.asm ... banked:FILE.asm ...
 """
 
 import argparse
@@ -35,40 +37,7 @@ LABEL_RE = re.compile(r'^([A-Za-z_.$][\w.$]*)(::?)(.*)$')
 AREA_RE = re.compile(r'^\s*\.area\s+(\w+)')
 IDENT_RE = re.compile(r'[A-Za-z_.$][\w.$]*')
 DIRECT_MNEMONICS = ('call', 'jp')
-
-
-class Module:
-    def __init__(self, path, kind, pin=None):
-        self.path = path
-        self.kind = kind          # 'common' or 'banked'
-        self.pin = pin            # forced bank number, or None
-        self.name = re.sub(r'\W', '_', os.path.splitext(os.path.basename(path))[0])
-        with open(path) as f:
-            self.lines = f.read().split('\n')
-        self.bank = 0 if kind == 'common' else None
-        self.size = 0
-        self.funcs = set()        # function labels defined in code areas
-        self.statics = set()      # of those, module-local ones
-
-    def code_area(self, area):
-        return area in ('_CODE', '_HOME')
-
-    def scan(self):
-        area = None
-        for line in self.lines:
-            m = AREA_RE.match(line)
-            if m:
-                area = m.group(1)
-                continue
-            m = LABEL_RE.match(line)
-            if not m or not self.code_area(area):
-                continue
-            name, colons = m.group(1), m.group(2)
-            if re.match(r'^\d+\$$', name):
-                continue
-            self.funcs.add(name)
-            if colons == ':':
-                self.statics.add(name)
+CODE_AREAS = ('_CODE', '_HOME')
 
 
 def split_comment(line):
@@ -85,23 +54,73 @@ def split_comment(line):
     return line, ''
 
 
-def measure(mod, sdas):
-    """Assemble a module to learn the size of its code area."""
+class Module:
+    def __init__(self, path, kind):
+        self.path = path
+        self.kind = kind          # 'common' or 'banked'
+        self.name = re.sub(r'\W', '_', os.path.splitext(os.path.basename(path))[0])
+        self.ext = os.path.splitext(path)[1]
+        with open(path) as f:
+            self.lines = f.read().split('\n')
+        self.funcs = []           # function labels in code areas, in order
+        self.statics = set()
+        self.chunk_of = []        # per line: function index for code lines, else None
+        self.sizes = []           # per function
+        self.banks = []           # per function
+
+    def scan(self):
+        area = None
+        chunk = -1
+        for line in self.lines:
+            code, _ = split_comment(line)
+            m = AREA_RE.match(code)
+            if m:
+                area = m.group(1)
+                self.chunk_of.append(None)
+                continue
+            if area in CODE_AREAS:
+                lm = LABEL_RE.match(code)
+                if lm and not re.match(r'^\d+\$$', lm.group(1)):
+                    self.funcs.append(lm.group(1))
+                    if lm.group(2) == ':':
+                        self.statics.add(lm.group(1))
+                    chunk = len(self.funcs) - 1
+                if code.strip() and chunk < 0 and self.kind == 'banked':
+                    sys.exit('banker: %s has code before the first label' % self.path)
+                self.chunk_of.append(chunk if code.strip() else None)
+            else:
+                self.chunk_of.append(None)
+
+
+def assemble_sizes(mod, sdas):
+    """Size of every function: assemble with one area per function."""
+    out = []
+    cur = None
+    for line, ch in zip(mod.lines, mod.chunk_of):
+        code, _ = split_comment(line)
+        if AREA_RE.match(code):
+            cur = None
+            out.append(line)
+            continue
+        if ch is not None and ch != cur:
+            out.append('\t.area _F%d' % ch)
+            cur = ch
+        out.append(line)
     with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR')) as td:
         src = os.path.join(td, mod.name + '.s')
         with open(src, 'w') as f:
-            f.write('\n'.join(mod.lines))
+            f.write('\n'.join(out))
         rel = os.path.join(td, mod.name + '.rel')
         r = subprocess.run([sdas, '-plosgff', rel, src], capture_output=True, text=True)
         if r.returncode != 0:
             sys.exit('banker: cannot assemble %s:\n%s%s' % (mod.path, r.stdout, r.stderr))
-        size = 0
+        sizes = [0] * len(mod.funcs)
         with open(rel) as f:
             for l in f:
-                m = re.match(r'A (\w+) size (\w+)', l)
-                if m and m.group(1) in ('_CODE', '_HOME'):
-                    size += int(m.group(2), 16)
-        return size
+                m = re.match(r'A _F(\d+) size (\w+)', l)
+                if m:
+                    sizes[int(m.group(1))] = int(m.group(2), 16)
+        return sizes
 
 
 def main():
@@ -120,23 +139,27 @@ def main():
     mods = []
     for spec in a.files:
         kind, _, rest = spec.partition(':')
-        pin = None
-        if kind == 'pin':
-            b, _, rest = rest.partition(':')
-            pin = int(b, 0)
-            kind = 'banked'
         if kind not in ('common', 'banked'):
             sys.exit('banker: bad spec ' + spec)
-        mods.append(Module(rest, kind, pin))
-    names = [m.name for m in mods]
-    if len(set(names)) != len(names):
+        mods.append(Module(rest, kind))
+
+    # module names must be unique: qualify clashing ones with their directory
+    seen = {}
+    for m in mods:
+        seen.setdefault(m.name, []).append(m)
+    for name, ms in seen.items():
+        if len(ms) > 1:
+            for m in ms:
+                d = os.path.basename(os.path.dirname(m.path))
+                m.name = re.sub(r'\W', '_', d) + '_' + name
+    if len({m.name for m in mods}) != len(mods):
         sys.exit('banker: duplicate module names')
 
     for m in mods:
         m.scan()
 
-    # Make statics of banked modules globally unique and public, so that
-    # thunks (in another file) can reference them.
+    # Statics of banked modules become globally unique public symbols, so
+    # that thunks and other banks can reference them.
     for m in mods:
         if m.kind != 'banked' or not m.statics:
             continue
@@ -151,55 +174,62 @@ def main():
                 code = IDENT_RE.sub(lambda t: ren.get(t.group(0), t.group(0)), code)
             out.append(code + com)
         m.lines = out
-        m.funcs = {ren.get(f, f) for f in m.funcs}
+        m.funcs = [ren.get(f, f) for f in m.funcs]
         m.statics = set()
 
-    # Bank assignment.
-    banked = [m for m in mods if m.kind == 'banked']
-    for m in banked:
-        m.size = measure(m, a.sdas)
-        if m.size > a.bank_size:
-            sys.exit('banker: %s needs %d bytes, more than one bank' % (m.path, m.size))
+    # Bank assignment, function by function in source order.
     used = {}
-    for m in banked:
-        if m.pin is not None:
-            m.bank = m.pin
-            used[m.pin] = used.get(m.pin, 0) + m.size
-    for m in sorted([m for m in banked if m.pin is None], key=lambda m: -m.size):
-        b = a.first_bank
-        while used.get(b, 0) + m.size > a.bank_size:
-            b += 1
-        if b > a.max_bank:
-            sys.exit('banker: out of banks')
-        m.bank = b
-        used[b] = used.get(b, 0) + m.size
-    for b, s in used.items():
-        if s > a.bank_size:
-            sys.exit('banker: bank %d overfull (%d bytes)' % (b, s))
-
-    owner = {}
+    bank = a.first_bank
     for m in mods:
-        for f in m.funcs:
-            owner[f] = m
-    farsyms = {}  # symbol -> bank
+        if m.kind != 'banked':
+            m.banks = [0] * len(m.funcs)
+            continue
+        m.sizes = assemble_sizes(m, a.sdas)
+        for f, sz in zip(m.funcs, m.sizes):
+            if sz > a.bank_size:
+                sys.exit('banker: function %s (%s) is larger than a bank' % (f, m.path))
+            if used.get(bank, 0) + sz > a.bank_size:
+                bank += 1
+                if bank > a.max_bank:
+                    sys.exit('banker: out of banks')
+            m.banks.append(bank)
+            used[bank] = used.get(bank, 0) + sz
 
-    def far(sym):
-        farsyms[sym] = owner[sym].bank
-        return sym + '__far'
+    owner = {}   # function symbol -> bank (0 = page 0)
+    for m in mods:
+        for f, b in zip(m.funcs, m.banks):
+            owner[f] = b
+    farsyms = {}
 
     os.makedirs(a.outdir, exist_ok=True)
     for m in mods:
         out = []
-        area = None
-        for line in m.lines:
+        orig_area = None
+        emitted_area = None
+        for line, ch in zip(m.lines, m.chunk_of):
             code, com = split_comment(line)
             am = AREA_RE.match(code)
             if am:
-                area = am.group(1)
-                if m.kind == 'banked' and area in ('_CODE', '_HOME'):
-                    code = code.replace(area, '_BANK%d' % m.bank)
+                orig_area = am.group(1)
+                if m.kind == 'banked' and orig_area in CODE_AREAS:
+                    continue            # re-emitted per function below
                 out.append(code + com)
+                emitted_area = orig_area
                 continue
+            if m.kind == 'common':
+                here = 0
+            elif ch is not None:
+                here = m.banks[ch]
+                want = '_BANK%d' % here
+                if emitted_area != want:
+                    out.append('\t.area %s' % want)
+                    emitted_area = want
+            else:
+                here = None
+                if code.strip() and orig_area is not None and emitted_area != orig_area:
+                    out.append('\t.area %s' % orig_area)
+                    emitted_area = orig_area
+
             lm = LABEL_RE.match(code)
             prefix = ''
             body = code
@@ -208,7 +238,7 @@ def main():
                 body = lm.group(3)
             st = body.strip()
             mnem = st.split(None, 1)[0].lower() if st else ''
-            if mnem in ('.globl', '.module', '.optsdcc', '.area'):
+            if mnem in ('.globl', '.module', '.optsdcc'):
                 out.append(code + com)
                 continue
             om = re.match(r'^(\s*\S+)(\s*)(.*)$', body)
@@ -221,21 +251,17 @@ def main():
 
             def sub(t):
                 s = t.group(0)
-                o = owner.get(s)
-                if o is None or o.kind == 'common':
+                b = owner.get(s)
+                if b is None or b == 0:
                     return s
-                if s == direct_target and o.bank == m.bank:
+                if s == direct_target and here == b:
                     return s
-                return far(s)
+                farsyms[s] = b
+                return s + '__far'
             if operands:
                 body = head + ws + IDENT_RE.sub(sub, operands)
             out.append(prefix + body + com)
-        # Thunk names must be declared for the assembler (-g makes undefined
-        # symbols global anyway, but be explicit).
-        refs = sorted({s + '__far' for s in farsyms if any(s + '__far' in l for l in out)})
-        if refs:
-            out.insert(0, '\n'.join('\t.globl %s' % r for r in refs))
-        with open(os.path.join(a.outdir, os.path.basename(m.path)), 'w') as f:
+        with open(os.path.join(a.outdir, m.name + m.ext), 'w') as f:
             f.write('\n'.join(out))
 
     with open(a.thunks, 'w') as f:
@@ -253,9 +279,10 @@ def main():
         with open(a.map, 'w') as f:
             for b in sorted(used):
                 f.write('bank %02X: %5d bytes free\n' % (b, a.bank_size - used[b]))
-                for m in sorted(banked, key=lambda m: m.name):
-                    if m.bank == b:
-                        f.write('    %-24s %5d\n' % (m.name, m.size))
+                for m in mods:
+                    n = sum(sz for sz, bb in zip(m.sizes, m.banks) if bb == b)
+                    if n:
+                        f.write('    %-28s %5d\n' % (m.name, n))
             f.write('thunks: %d (%d bytes)\n' % (len(farsyms), 10 * len(farsyms)))
 
 

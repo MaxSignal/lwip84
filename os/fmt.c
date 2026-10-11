@@ -16,7 +16,7 @@ static void put(struct out *o, char c)
     o->len++;
 }
 
-int k_vsnprintf(char *buf, size_t n, const char *fmt, va_list ap)
+int vsnprintf(char *buf, size_t n, const char *fmt, va_list ap)
 {
     struct out o;
     char tmp[12];
@@ -143,12 +143,12 @@ int k_vsnprintf(char *buf, size_t n, const char *fmt, va_list ap)
     return (int)o.len;
 }
 
-int k_snprintf(char *buf, size_t n, const char *fmt, ...)
+int snprintf(char *buf, size_t n, const char *fmt, ...)
 {
     int r;
     va_list ap;
     va_start(ap, fmt);
-    r = k_vsnprintf(buf, n, fmt, ap);
+    r = vsnprintf(buf, n, fmt, ap);
     va_end(ap);
     return r;
 }
@@ -160,11 +160,22 @@ void dbg_printf(const char *fmt, ...)
     const char *p = buf;
     va_list ap;
     va_start(ap, fmt);
-    k_vsnprintf(buf, sizeof(buf), fmt, ap);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     while (*p)
         port_emu_debug = *p++;
 #else
     (void)fmt;
 #endif
+}
+
+/* exit: used by lwIP-CE's fatal error path; there is nothing to return to */
+void exit(int status)
+{
+    con_printf("\nFATAL %d - press ON\n", status);
+    con_flush();
+    dbg_printf("exit(%d)\n", status);
+    __asm__("di");
+    for (;;)
+        __asm__("halt");
 }

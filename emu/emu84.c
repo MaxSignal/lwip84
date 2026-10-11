@@ -348,7 +348,7 @@ static uint8_t key_read(void)
 
 static uint8_t port_in(uint8_t p)
 {
-    if ((p >= 0x4A && p <= 0x5B) || p >= 0x80) {
+    if ((p >= 0x4A && p <= 0x5B) || (p >= 0x80 && p <= 0xAF)) {
         uint8_t v;
         if (usb_port_in(p, &v))
             return v;
@@ -387,7 +387,7 @@ static uint8_t port_in(uint8_t p)
 
 static void port_out(uint8_t p, uint8_t v)
 {
-    if ((p >= 0x4A && p <= 0x5B) || p >= 0x80) {
+    if ((p >= 0x4A && p <= 0x5B) || (p >= 0x80 && p <= 0xAF)) {
         if (usb_port_out(p, v))
             return;
     }

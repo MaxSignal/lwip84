@@ -101,6 +101,9 @@ static struct {
     unsigned long frames_to_dev, frames_from_dev, ntb_bad;
 } u;
 
+static uint16_t le16(const uint8_t *p) { return p[0] | (p[1] << 8); }
+static void put16(uint8_t *p, uint16_t v) { p[0] = v; p[1] = v >> 8; }
+
 static void ulog(const char *fmt, ...)
 {
     va_list ap;
@@ -211,7 +214,7 @@ int usb_port_in(uint8_t p, uint8_t *v)
     case 0x83: *v = u.intrtx >> 8; u.intrtx &= 0x00FF; return 1;
     case 0x84: *v = u.intrrx & 0xFF; u.intrrx &= 0xFF00; return 1;
     case 0x85: *v = u.intrrx >> 8; u.intrrx &= 0x00FF; return 1;
-    case 0x86: *v = u.intrusb; u.intrusb = 0; return 1;
+    case 0x86: *v = u.intrusb; if (u.intrusb) ulog("INTRUSB read %02x", u.intrusb); u.intrusb = 0; return 1;
     case 0x87: *v = u.intrtxe & 0xFF; return 1;
     case 0x88: *v = u.intrtxe >> 8; return 1;
     case 0x89: *v = u.intrrxe & 0xFF; return 1;
@@ -277,10 +280,8 @@ int usb_port_out(uint8_t p, uint8_t v)
     case 0x54: {
         int was = ctrl_active();
         u.r54 = v & ~0x28;
-        if (!was && ctrl_active()) {
+        if (!was && ctrl_active())
             ulog("controller on (54=%02X)", v);
-            u.t_active = ti.now_ps;
-        }
         return 1;
     }
     case 0x57: u.r57 = v; u.r56 &= v; return 1;
@@ -457,6 +458,8 @@ static void cx_step(void)
     }
     switch (u.cx_phase) {
     case CX_SETUP:
+        if (u.faddr != u.addr_dev)
+            break;  /* device does not answer at this address (yet) */
         if (u.csr0 & (CSR0_RXPKTRDY | CSR0_TXPKTRDY)) {
             /* a new SETUP aborts an unfinished transfer */
             u.csr0 |= CSR0_SETUPEND;
@@ -705,8 +708,6 @@ static void host_step(void)
 /* ------------------------------------------------------------------ */
 /* NTB16 handling                                                      */
 
-static uint16_t le16(const uint8_t *p) { return p[0] | (p[1] << 8); }
-static void put16(uint8_t *p, uint16_t v) { p[0] = v; p[1] = v >> 8; }
 
 static void ntb_from_device(const uint8_t *b, int len)
 {
@@ -836,8 +837,8 @@ static void bulk_step(void)
         ntf->txlen = 0;
         ntf->txcsr &= ~TX_TXPKTRDY;
         u.intrtx |= 4;
-        if (n < 16) {
-            if (u.ntf_len >= 8 && u.ntf[0] == 0xA1) {
+        if (u.ntf_len >= 8 && u.ntf_len >= 8 + le16(u.ntf + 6)) {
+            if (u.ntf[0] == 0xA1) {
                 if (u.ntf[1] == 0x00) {
                     u.ncm_up = le16(u.ntf + 2);
                     fprintf(stderr, "usb: NCM link %s\n", u.ncm_up ? "up" : "down");
@@ -915,6 +916,7 @@ void usb_tick(uint64_t now)
     int act = ctrl_active();
     if (act && !u.connected) {
         u.connected = 1;
+        u.t_active = now;
         u.state = H_IDLE;
         ulog("device connected");
     } else if (!act && u.connected) {
