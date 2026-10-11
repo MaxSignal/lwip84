@@ -162,8 +162,12 @@ void dbg_printf(const char *fmt, ...)
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
-    while (*p)
-        port_emu_debug = *p++;
+    if (k_is_emulator) {
+        while (*p)
+            port_emu_debug = *p++;
+    } else {
+        con_puts(buf);
+    }
 #else
     (void)fmt;
 #endif

@@ -74,6 +74,31 @@ static uint8_t *map_addr(uint16_t addr, int *is_flash)
     return page_ptr(page, is_flash) + (addr & 0x3FFF);
 }
 
+/* Opcode fetch: model the boot code's execution protection (flash pages
+ * exec_lo..exec_hi, inclusive as in TilEm) and flag any fetch from RAM,
+ * which this OS never does. */
+static void check_fetch(uint16_t addr)
+{
+    int fl;
+    uint8_t page;
+    if (ti.fault || addr < 0x4000)
+        return;
+    switch (addr >> 14) {
+    case 1: page = ti.mem_mode ? (ti.bank_a & ~1) : ti.bank_a; break;
+    case 2: page = ti.mem_mode ? (ti.bank_a | 1) : ti.bank_b; break;
+    default: page = ti.mem_mode ? ti.bank_b : (0x80 | ti.ram_c000); break;
+    }
+    (void)map_addr(addr, &fl);
+    if (!fl) {
+        fprintf(stderr, "emu84: FAULT: opcode fetch from RAM page %02X at %04X\n", page, addr);
+        ti.fault = 1;
+    } else if (page >= ti.exec_lo && page <= ti.exec_hi) {
+        fprintf(stderr, "emu84: FAULT: execution protection, flash page %02X at %04X "
+                "(the calculator would reset)\n", page, addr);
+        ti.fault = 1;
+    }
+}
+
 static uint8_t mem_read(uint16_t addr)
 {
     int fl;
@@ -372,6 +397,8 @@ static uint8_t port_in(uint8_t p)
                ((ti.lcd.mode & 2) ? 2 : 0) | (ti.lcd.mode & 1);
     case 0x11: case 0x13: return lcd_data_read();
     case 0x20: return ti.cpu_speed;
+    case 0x22: return ti.exec_lo;
+    case 0x23: return ti.exec_hi;
     case 0x21: return ti.flash_pages == 128 ? 0x21 : 0x20;
     case 0x30: case 0x33: case 0x36: return ti.crys[(p - 0x30) / 3].ctl;
     case 0x31: case 0x34: case 0x37: return ti.crys[(p - 0x31) / 3].loop_ctrl;
@@ -416,6 +443,8 @@ static void port_out(uint8_t p, uint8_t v)
     case 0x10: case 0x12: lcd_cmd(v); break;
     case 0x11: case 0x13: lcd_data_write(v); break;
     case 0x14: ti.flash_unlocked = v & 1; break;
+    case 0x22: if (ti.flash_unlocked) ti.exec_lo = v; break;
+    case 0x23: if (ti.flash_unlocked) ti.exec_hi = v; break;
     case 0x20: ti.cpu_speed = v & 3 ? 1 : 0; break;
     case 0x30: case 0x33: case 0x36: {
         struct crystal *t = &ti.crys[(p - 0x30) / 3];
@@ -470,7 +499,7 @@ static void run_ps(uint64_t dur)
 {
     uint64_t end = ti.now_ps + dur;
     uint64_t pins = ti.pins;
-    while (ti.now_ps < end) {
+    while (ti.now_ps < end && !ti.fault) {
         if (ti.int_line && ti.cpu.iff1)
             pins |= Z80_INT;
         else
@@ -479,6 +508,8 @@ static void run_ps(uint64_t dur)
         if (pins & Z80_MREQ) {
             uint16_t a = Z80_GET_ADDR(pins);
             if (pins & Z80_RD) {
+                if (pins & Z80_M1)
+                    check_fetch(a);
                 Z80_SET_DATA(pins, mem_read(a));
             } else if (pins & Z80_WR) {
                 mem_write(a, Z80_GET_DATA(pins));
@@ -632,7 +663,16 @@ int main(int argc, char **argv)
         fprintf(stderr, "emu84: %s too small\n", rom);
         return 2;
     }
+    /* emulator signature on the boot page (real calculators carry TI's boot
+     * code there); the OS uses it to send debug output to port FEh */
+    {
+        uint8_t *boot = ti.flash + (ti.flash_pages - 1) * 0x4000;
+        if (boot[0x10] == 0xFF)
+            memcpy(boot + 0x10, "emu84", 6);
+    }
     ti.bank_b = 0x81;
+    ti.exec_lo = 0x08;                  /* values left by the retail boot code */
+    ti.exec_hi = se ? 0x69 : 0x29;
     ti.mem_mode = 0;
     ti.timer_speed = 6;
     ti.key_groups = 0xFF;
@@ -660,5 +700,9 @@ int main(int argc, char **argv)
             rc = 1;
     }
     usb_shutdown();
+    if (ti.fault) {
+        print_regs();
+        return 3;
+    }
     return rc;
 }

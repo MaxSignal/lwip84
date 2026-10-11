@@ -1,8 +1,9 @@
 # lwIP-84+ : lwIP-CE on the TI-84 Plus / Plus SE (Z80) as a standalone OS.
 #
-#   make            release OS image   (build/lwip84.rom)
-#   make DEBUG=1    debug build with emulator console output (build-debug/)
-#   make emu        build the test emulator (build/emu84)
+#   make            release OS image    (build-84p/lwip84.rom, build-84p/lwip84.8xu)
+#   make DEBUG=1    debug build with emulator console output (build-debug-84p/)
+#   make MODEL=84pse  TI-84 Plus Silver Edition image
+#   make emu        build the test emulator (build-84p/emu84)
 
 # SDCC 4.4.0 is required: 4.5.0 miscompiles variable shifts such as
 # (8 >> i) inside larger functions (shift count lost).
@@ -17,11 +18,26 @@ LD      = sdldz80
 PY      = python3 -I
 SDCCLIB = $(abspath $(SDCC_BIN)/../share/sdcc/lib/z80)
 
+# MODEL=84p (TI-84 Plus, 1 MiB flash) or MODEL=84pse (TI-84 Plus SE, 2 MiB).
+# The boot code forbids code execution on flash pages 08h..29h (84+) or
+# 08h..69h (84+SE), so banked code goes to pages 01-07 and to the pages
+# TI-OS itself uses at the top of flash.
+MODEL ?= 84p
+ifeq ($(MODEL),84pse)
+BANKS   = 1-7,73-7B
+PAGES   = 128
+DEVICE  = TI-84+SE
+else
+BANKS   = 1-7,33-3B
+PAGES   = 64
+DEVICE  = TI-84+
+endif
+
 ifeq ($(DEBUG),1)
-B       = build-debug
+B       = build-debug-$(MODEL)
 DEFS    = -DDEBUG
 else
-B       = build
+B       = build-$(MODEL)
 DEFS    =
 endif
 
@@ -30,10 +46,10 @@ CFLAGS  = -mz80 --std-sdcc11 --opt-code-size --constseg CONST $(DEFS) \
           -I include -I os -I ../src/include -I ../src
 
 # modules that must stay in page 0 (interrupt path, runtime)
-COMMON_C = os/isr.c
+COMMON_C = os/isr.c os/far.c
 COMMON_S = os/crt0.s os/farcall.s os/usb_ll.s
 # everything else is placed in flash pages 1.. by tools/banker.py
-BANKED_C = os/main.c os/lcd.c os/kbd.c os/fmt.c os/font3x5.c os/usb.c os/ncm.c os/heap.c \
+BANKED_C = os/main.c os/demo.c os/lcd.c os/kbd.c os/fmt.c os/font3x5.c os/usb.c os/ncm.c os/heap.c \
            port/sys_arch.c port/sntp_time.c port/bytes.c port/imports.c port/netif_ncm.c \
            $(LWIP_C)
 
@@ -51,7 +67,7 @@ COMMON_ASM = $(patsubst %.c,$(B)/asm/%.asm,$(COMMON_C)) $(patsubst %.s,$(B)/asm/
 BANKED_ASM = $(patsubst $(LWIP_SRC)/%.c,$(B)/asm/lwip/%.asm,$(filter $(LWIP_SRC)/%,$(BANKED_C))) \
              $(patsubst %.c,$(B)/asm/%.asm,$(filter-out $(LWIP_SRC)/%,$(BANKED_C)))
 
-all: $(B)/lwip84.rom
+all: $(B)/lwip84.rom $(B)/lwip84.8xu
 
 $(B)/asm/%.asm: %.c
 	@mkdir -p $(dir $@)
@@ -68,7 +84,7 @@ $(B)/asm/%.asm: %.s
 
 $(B)/banked.stamp: $(COMMON_ASM) $(BANKED_ASM) tools/banker.py
 	rm -rf $(B)/bk && mkdir -p $(B)/bk
-	$(PY) tools/banker.py --outdir $(B)/bk --thunks $(B)/bk/thunks.s --map $(B)/banks.txt --ldargs $(B)/banks.lnk \
+	$(PY) tools/banker.py --outdir $(B)/bk --thunks $(B)/bk/thunks.s --map $(B)/banks.txt --ldargs $(B)/banks.lnk --banks $(BANKS) \
 	    $(addprefix common:,$(COMMON_ASM)) $(addprefix banked:,$(BANKED_ASM))
 	cd $(B)/bk && for f in *.asm *.s; do $(AS) -plosgff $${f%.*}.rel $$f || exit 1; done
 	touch $@
@@ -79,8 +95,17 @@ $(B)/lwip84.ihx: $(B)/banked.stamp
 	    -k $(SDCCLIB) -l z80 ../lwip84.ihx crt0.rel $$(ls *.rel | grep -v '^crt0.rel$$')
 
 $(B)/lwip84.rom: $(B)/lwip84.ihx tools/mkrom.py
-	$(PY) tools/mkrom.py $< $@
+	$(PY) tools/mkrom.py --pages $(PAGES) $< $@
 	@grep -E "^_(CODE|CONST|HOME|GSINIT|GSFINAL|INITIALIZER|DATA|BSS|INITIALIZED) " $(B)/lwip84.map | sort -u
+
+# OS upgrade for the calculator, signed with TI's public OS key 0A
+# (tools/get-key.sh); send it with TiLP or TI Connect.
+KEY ?= keys/0A.key
+$(B)/lwip84.8xu: $(B)/lwip84.rom $(KEY)
+	mktiupgrade -p -k $(KEY) -d $(DEVICE) -v 1.0 $< $@ 00 $$(sed -n 's/^bank \([0-9A-F]*\):.*/\1/p' $(B)/banks.txt)
+
+$(KEY):
+	tools/get-key.sh
 
 EMU_SRC = emu/emu84.c emu/usb.c
 emu: $(B)/emu84
@@ -89,6 +114,6 @@ $(B)/emu84: $(EMU_SRC) emu/emu84.h
 	gcc -O2 -Wall -Wno-unused-function -o $@ $(EMU_SRC)
 
 clean:
-	rm -rf build build-debug
+	rm -rf build-* build build-debug
 
 .PHONY: all emu clean

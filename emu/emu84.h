@@ -31,7 +31,8 @@ struct ti84 {
     struct lcd lcd;
     uint64_t now_ps, next_hwtimer, next_event;
     uint32_t rtc_base;
-    int debug_out, warned_flash_write, halt_warned;
+    uint8_t exec_lo, exec_hi;           /* ports 22h/23h */
+    int debug_out, warned_flash_write, halt_warned, fault;
     char log[65536];
     size_t log_len;
 };

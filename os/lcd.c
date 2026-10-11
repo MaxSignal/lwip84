@@ -9,6 +9,7 @@ uint8_t lcd_buf[768];          /* 64 rows x 12 bytes, MSB = leftmost pixel */
 static uint8_t con_x, con_y;
 static uint8_t con_dirty;
 static char con_text[CON_ROWS][CON_COLS];
+static char con_stat[CON_COLS + 1];
 
 /* The LCD driver needs about 10 us between accesses.  A fixed delay works
  * with both the old Toshiba drivers and the newer ones that must not be
@@ -103,10 +104,19 @@ static void con_redraw(void)
 {
     uint8_t r, c;
     lcd_clear();
+    lcd_draw_text(1, 1, con_stat);
+    lcd_invert_rect(0, 0, 96, 7);
     for (r = 0; r < CON_ROWS; r++)
         for (c = 0; c < CON_COLS; c++)
             if (con_text[r][c] != ' ')
-                lcd_draw_char(c * 4, r * 6 + 2, con_text[r][c]);
+                lcd_draw_char(c * 4, r * 6 + 9, con_text[r][c]);
+}
+
+void con_status(const char *s)
+{
+    strncpy(con_stat, s, CON_COLS);
+    con_stat[CON_COLS] = 0;
+    con_dirty = 1;
 }
 
 void con_clear(void)
@@ -124,9 +134,6 @@ void con_goto(uint8_t col, uint8_t row)
 
 void con_putc(char c)
 {
-#ifdef DEBUG
-    port_emu_debug = c;
-#endif
     if (c == '\n') {
         con_x = CON_COLS;
     } else if (c == '\r') {

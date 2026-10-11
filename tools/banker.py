@@ -22,7 +22,7 @@ so pointers to constants are valid from every bank.
 
 Usage:
   banker.py --outdir DIR --thunks DIR/thunks.s [--map map.txt] [--ldargs f]
-            [--bank-size N] [--first-bank N] [--max-bank N]
+            [--bank-size N] [--banks 1-7,33-3B]
             common:FILE.asm ... banked:FILE.asm ...
 """
 
@@ -130,8 +130,8 @@ def main():
     ap.add_argument('--map')
     ap.add_argument('--ldargs', help='write sdldz80 -b options for the banks to this file')
     ap.add_argument('--bank-size', type=lambda s: int(s, 0), default=0x4000)
-    ap.add_argument('--first-bank', type=int, default=1)
-    ap.add_argument('--max-bank', type=int, default=0x1B)
+    ap.add_argument('--banks', default='1-7',
+                    help='flash pages for banked code, e.g. "1-7,33-3B" (hex)')
     ap.add_argument('--sdas', default='sdasz80')
     ap.add_argument('files', nargs='+')
     a = ap.parse_args()
@@ -178,8 +178,13 @@ def main():
         m.statics = set()
 
     # Bank assignment, function by function in source order.
+    pages = []
+    for part in a.banks.split(','):
+        lo, _, hi = part.partition('-')
+        pages += range(int(lo, 16), int(hi or lo, 16) + 1)
     used = {}
-    bank = a.first_bank
+    bank_idx = 0
+    bank = pages[0]
     for m in mods:
         if m.kind != 'banked':
             m.banks = [0] * len(m.funcs)
@@ -189,9 +194,10 @@ def main():
             if sz > a.bank_size:
                 sys.exit('banker: function %s (%s) is larger than a bank' % (f, m.path))
             if used.get(bank, 0) + sz > a.bank_size:
-                bank += 1
-                if bank > a.max_bank:
-                    sys.exit('banker: out of banks')
+                bank_idx += 1
+                if bank_idx >= len(pages):
+                    sys.exit('banker: out of banks (%s)' % a.banks)
+                bank = pages[bank_idx]
             m.banks.append(bank)
             used[bank] = used.get(bank, 0) + sz
 

@@ -1,17 +1,28 @@
-/* main.c - lwIP-84+ OS entry */
+/* main.c - lwIP-84+ OS: start-up and the network test console.
+ *
+ * Keys:  Y= status   WINDOW ping gateway   ZOOM DNS lookup
+ *        TRACE HTTP GET   GRAPH TCP echo (gateway:8084)
+ *        CLEAR clear screen   2nd+ON power off
+ */
+#include <string.h>
 #include "hw.h"
 #include "kernel.h"
 #include "usb.h"
 #include "ncm.h"
+#include "demo.h"
 #include "lwip/init.h"
 #include "lwip/netif.h"
 #include "lwip/dhcp.h"
+#include "lwip/dns.h"
 #include "lwip/timeouts.h"
 #include "lwip/ip4_addr.h"
 #include "netif/ethernet.h"
 #include "drivers/usb_ethernet.h"
-#include "lwip/tcp.h"
-#include "lwip/dns.h"
+
+#define DEMO_HOST "example.com"
+
+static struct netif ncm_netif;
+static const char *const usb_names[] = {"off", "wait", "dflt", "addr", "cfg"};
 
 void k_delay_ms(uint16_t ms)
 {
@@ -20,116 +31,113 @@ void k_delay_ms(uint16_t ms)
         __asm__("halt");
 }
 
-static struct netif ncm_netif;
-
-static void show_status(void)
+void k_power_off(void)
 {
-    static uint32_t last_ip = 1;
-    uint32_t ip = ip4_addr_get_u32(netif_ip4_addr(&ncm_netif));
-    if (ip != last_ip) {
-        last_ip = ip;
-        con_printf("ip %s\n", ip4addr_ntoa(netif_ip4_addr(&ncm_netif)));
-        dbg_printf("ip %s\n", ip4addr_ntoa(netif_ip4_addr(&ncm_netif)));
+    usb_stop();
+    port_lcd_cmd = 0x02;                /* display off */
+    __asm__("di");
+    k_on_pressed = 0;
+    port_int_mask = INT_ON;             /* low power while halted, wake on ON */
+    __asm__("ei");
+    while (!k_on_pressed)
+        __asm__("halt");
+    port_int_mask = INT_ON | INT_TIMER1 | INT_POWER;
+    k_delay_ms(50);
+    lcd_init();
+    con_flush();
+    usb_start();
+}
+
+static void status_line(void)
+{
+    static char last[CON_COLS + 1];
+    char buf[CON_COLS + 1];
+    const ip4_addr_t *ip = netif_ip4_addr(&ncm_netif);
+    snprintf(buf, sizeof(buf), "%-4s %s", usb_names[usb_state],
+             ip4_addr_isany(ip) ? (ncm_link_up() ? "dhcp..." : "no link") : ip4addr_ntoa(ip));
+    if (strcmp(buf, last)) {
+        strcpy(last, buf);
+        con_status(buf);
     }
 }
 
-/* --- quick TCP test: connect to the host (192.168.84.1:8084), send a line,
- * print what comes back --- */
-static struct tcp_pcb *test_pcb;
-
-static err_t test_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err)
+static void show_info(void)
 {
-    char buf[64];
-    uint16_t n;
-    (void)arg;
-    (void)err;
-    if (!p) {
-        con_puts("tcp: closed\n");
-        dbg_printf("tcp closed\n");
-        tcp_close(pcb);
-        test_pcb = NULL;
-        return ERR_OK;
-    }
-    n = pbuf_copy_partial(p, buf, sizeof(buf) - 1, 0);
-    buf[n] = 0;
-    con_printf("rx: %s", buf);
-    dbg_printf("tcp rx %u: %s", p->tot_len, buf);
-    tcp_recved(pcb, p->tot_len);
-    pbuf_free(p);
-    return ERR_OK;
-}
-
-static err_t test_connected(void *arg, struct tcp_pcb *pcb, err_t err)
-{
-    static const char msg[] = "hello from a TI-84 Plus\n";
-    (void)arg;
-    con_printf("tcp: connected %d\n", err);
-    dbg_printf("tcp connected %d\n", err);
-    tcp_write(pcb, msg, sizeof(msg) - 1, 0);
-    tcp_output(pcb);
-    return ERR_OK;
-}
-
-static void test_err(void *arg, err_t err)
-{
-    (void)arg;
-    con_printf("tcp: error %d\n", err);
-    dbg_printf("tcp error %d\n", err);
-    test_pcb = NULL;
-}
-
-static void tcp_test(void)
-{
-    ip_addr_t host;
-    if (test_pcb)
-        return;
-    IP4_ADDR(&host, 192, 168, 84, 1);
-    test_pcb = tcp_new();
-    tcp_recv(test_pcb, test_recv);
-    tcp_err(test_pcb, test_err);
-    tcp_connect(test_pcb, &host, 8084, test_connected);
-    con_puts("tcp: connecting\n");
-    dbg_printf("tcp connecting\n");
+    con_printf("usb %s err %u 4C=%02x 4D=%02x\n", usb_names[usb_state], usb_last_error,
+               port_usb_status, port_usb_lines);
+    con_printf("ntb rx %u bad %u fr %u/%u\n", ncm_stats.rx_ntbs, ncm_stats.rx_bad,
+               ncm_stats.rx_frames, ncm_stats.tx_frames);
+    con_printf("gw %s\n", ip4addr_ntoa(netif_ip4_gw(&ncm_netif)));
+    con_printf("dns %s\n", ipaddr_ntoa(dns_getserver(0)));
+    con_printf("heap %u free\n", heap_free_bytes());
 }
 
 void main(void)
 {
-    uint8_t k, last_state = 0xFF;
+    uint8_t k, shift = 0;
     err_t e;
     port_int_id = 0x00;                 /* map mode 0, timer 1 at 512 Hz */
     port_int_mask = INT_ON | INT_TIMER1 | INT_POWER;
     __asm__("ei");
+    k_detect_platform();
     heap_init();
     lcd_init();
     con_clear();
-    con_puts("lwIP-84+ OS\n");
+    con_puts("lwIP-84+ " __DATE__ "\n");
     con_flush();
     e = lwip_init();
-    con_printf("lwip_init %d heap %u\n", e, heap_free_bytes());
-    dbg_printf("lwip_init %d heap %u\n", e, heap_free_bytes());
+    if (e != ERR_OK)
+        con_printf("lwip_init: %d\n", e);
+    dbg_printf("lwip_init %d heap %u%s\n", e, heap_free_bytes(), k_is_emulator ? " (emu)" : "");
     netif_add(&ncm_netif, IP4_ADDR_ANY4, IP4_ADDR_ANY4, IP4_ADDR_ANY4, NULL, netif_ncm_init,
               ethernet_input);
     netif_set_default(&ncm_netif);
     netif_set_up(&ncm_netif);
     dhcp_start(&ncm_netif);
     usb_start();
-    con_flush();
+    if (usb_last_error)
+        con_printf("usb start error %u\n", usb_last_error);
+    con_puts("connect USB to a PC\n");
     for (;;) {
         usb_poll();
         netif_ncm_poll(&ncm_netif);
         sys_check_timeouts();
-        if (usb_state != last_state) {
-            last_state = usb_state;
-            dbg_printf("usb state %u\n", usb_state);
+        demo_poll();
+        status_line();
+        if (k_on_pressed) {
+            k_on_pressed = 0;
+            if (shift)
+                k_power_off();
+            shift = 0;
         }
-        show_status();
         k = kbd_get();
-        if (k == K_ENTER)
-            tcp_test();
-        if (k == K_CLEAR) {
-            usb_stop();
-            con_puts("usb stopped\n");
+        switch (k) {
+        case K_2ND:
+            shift ^= 1;
+            break;
+        case K_YEQU:
+            show_info();
+            break;
+        case K_WINDOW:
+            demo_ping(netif_ip_gw4(&ncm_netif));
+            break;
+        case K_ZOOM:
+            demo_dns(DEMO_HOST);
+            break;
+        case K_TRACE:
+            demo_http_get(DEMO_HOST);
+            break;
+        case K_GRAPH:
+            demo_tcp_echo(ip4addr_ntoa(netif_ip4_gw(&ncm_netif)), 8084);
+            break;
+        case K_CLEAR:
+            con_clear();
+            break;
         }
+        if (k != K_NONE && k != K_2ND)
+            shift = 0;
         con_flush();
+        if (!k)
+            __asm__("halt");            /* wait for the next tick or USB event */
     }
 }

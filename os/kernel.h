@@ -13,7 +13,7 @@ void k_delay_ms(uint16_t ms);
 
 /* LCD / console (96x64, 3x5 font in 4x6 cells: 24 columns, 10 rows) */
 #define CON_COLS 24
-#define CON_ROWS 10
+#define CON_ROWS 9                /* below the status line */
 extern uint8_t lcd_buf[768];
 void lcd_init(void);
 void lcd_update(void);
@@ -27,6 +27,7 @@ void con_putc(char c);
 void con_puts(const char *s);
 void con_printf(const char *fmt, ...);
 void con_flush(void);            /* push console changes to the LCD */
+void con_status(const char *s);  /* inverted status line at the top */
 
 /* keypad */
 enum {
@@ -44,7 +45,17 @@ uint8_t kbd_get(void);           /* edge-triggered with auto-repeat, non-blockin
 #include "ti84p_libc.h"
 void heap_init(void);
 
-/* debug output: emulator console in DEBUG builds, nothing otherwise */
+/* debug output (DEBUG builds): emulator console when running in emu84,
+ * otherwise the LCD console */
 void dbg_printf(const char *fmt, ...);
+
+/* far.c (page 0) */
+extern uint8_t k_is_emulator;
+void k_detect_platform(void);
+void far_read(uint8_t page, uint16_t addr, void *dst, uint16_t len);
+
+/* power */
+extern volatile uint8_t k_on_pressed;
+void k_power_off(void);
 
 #endif

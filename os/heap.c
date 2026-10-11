@@ -19,7 +19,8 @@ static uint16_t *hdr(uint8_t *p) { return (uint16_t *)p; }
 
 void heap_init(void)
 {
-    heap_start = heap_base;
+    /* block sizes are even, so both ends must be even too */
+    heap_start = (uint8_t *)(((uint16_t)heap_base + 1u) & ~1u);
     heap_end = (uint8_t *)(0x10000u - STACK_RESERVE);
     *hdr(heap_start) = (uint16_t)(heap_end - heap_start) & ~1u;
 }
