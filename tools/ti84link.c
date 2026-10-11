@@ -23,6 +23,7 @@ static CableHandle *cable;
 static CalcHandle *calc;
 static CalcModel model;
 static int is_se;
+static int boot_mode;
 
 static int fail(const char *what, int err)
 {
@@ -61,8 +62,16 @@ static int open_calc(void)
     calc = ticalcs_handle_new(model);
     if ((err = ticalcs_cable_attach(calc, cable)))
         return fail("cable attach", err);
-    if ((err = ticalcs_calc_isready(calc)))
+    if ((err = ticalcs_calc_isready(calc))) {
+        /* the boot code's OS receive mode rejects the basic-mode ping;
+         * send_os copes with boot mode by itself */
+        if (err == 304) {           /* ERR_CALC_IN_BOOT_MODE-ish: "basic mode while in boot mode" */
+            fprintf(stderr, "ti84link: calculator is in boot mode\n");
+            boot_mode = 1;
+            return 0;
+        }
         return fail("ready check", err);
+    }
     return 0;
 }
 
@@ -228,8 +237,16 @@ static int cmd_sendos(const char *file, int force)
 {
     CalcInfos ci;
     int err;
-    if (get_info(&ci))
-        return 1;
+    if (boot_mode || get_info(&ci)) {
+        /* the boot code's OS receive mode may not answer version requests */
+        if (!force)
+            return 1;
+        fprintf(stderr, "ti84link: no version info, continuing (--force)\n");
+        if (!boot_mode)
+            reopen_calc();
+        strcpy(ci.boot_version, "?");
+        strcpy(ci.os_version, "?");
+    }
     printf("calculator: OS %s, boot %s\n", ci.os_version, ci.boot_version);
     if (boot_is_103_or_newer(ci.boot_version) && !force) {
         fprintf(stderr, "ti84link: boot code %s rejects third-party OS upgrades;\n"
