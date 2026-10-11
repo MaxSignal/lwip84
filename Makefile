@@ -19,16 +19,19 @@ PY      = python3 -I
 SDCCLIB = $(abspath $(SDCC_BIN)/../share/sdcc/lib/z80)
 
 # MODEL=84p (TI-84 Plus, 1 MiB flash) or MODEL=84pse (TI-84 Plus SE, 2 MiB).
+# FIXED is the page of the Z80 field arithmetic and its tables (fe_z80.s).
 # The boot code forbids code execution on flash pages 08h..29h (84+) or
 # 08h..69h (84+SE), so banked code goes to pages 01-07 and to the pages
 # TI-OS itself uses at the top of flash.
 MODEL ?= 84p
 ifeq ($(MODEL),84pse)
-BANKS   = 1-7,73-7B
+BANKS   = 1-7,73-7A
+FIXED   = 7B
 PAGES   = 128
 DEVICE  = TI-84+SE
 else
-BANKS   = 1-7,33-3B
+BANKS   = 1-7,33-3A
+FIXED   = 3B
 PAGES   = 64
 DEVICE  = TI-84+
 endif
@@ -42,8 +45,8 @@ DEFS    =
 endif
 
 CFLAGS  = -mz80 --std-sdcc11 --opt-code-size --constseg CONST $(DEFS) \
-          -DLWIP_PORT_TI84P=1 -DLWIP_TLS_FLOOR_BYTES=0u '-D__attribute__(x)=' \
-          -I include -I os -I ../src/include -I ../src
+          -DLWIP_PORT_TI84P=1 -DFE_ASM -DLWIP_TLS_FLOOR_BYTES=0u '-D__attribute__(x)=' \
+          -I include -I os -I port -I crypto -I ../src/include -I ../src
 
 # modules that must stay in page 0 (interrupt path, runtime)
 COMMON_C = os/isr.c os/far.c os/usb.c
@@ -51,7 +54,8 @@ COMMON_S = os/crt0.s os/farcall.s os/usb_ll.s
 # everything else is placed in flash pages 1.. by tools/banker.py
 BANKED_C = os/main.c os/demo.c os/apps.c os/lcd.c os/kbd.c os/fmt.c os/font3x5.c os/usb_ctl.c os/ncm.c os/heap.c \
            port/sys_arch.c port/sntp_time.c port/bytes.c port/imports.c port/netif_ncm.c \
-           port/usb_ethernet84.c port/tls_stub.c port/lwip_start84.c \
+           port/usb_ethernet84.c port/tls84.c port/kx84.c port/lwip_start84.c \
+           crypto/sha256.c crypto/chacha.c crypto/x25519.c crypto/rng.c \
            $(LWIP_C)
 
 # lwIP-CE sources shared with the TI-84 Plus CE build
@@ -71,12 +75,15 @@ BANKED_ASM = $(patsubst $(LWIP_SRC)/%.c,$(B)/asm/lwip/%.asm,$(filter $(LWIP_SRC)
 
 all: $(B)/lwip84.rom $(B)/lwip84.8xu
 
-$(B)/asm/%.asm: %.c
+# no automatic dependencies with SDCC: every module depends on all port headers
+HDRS = $(wildcard include/*.h include/*/*.h os/*.h port/*.h crypto/*.h)
+
+$(B)/asm/%.asm: %.c $(HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -S $< -o $@
 
 # shared lwIP-CE sources live outside this directory
-$(B)/asm/lwip/%.asm: $(LWIP_SRC)/%.c
+$(B)/asm/lwip/%.asm: $(LWIP_SRC)/%.c $(HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -S $< -o $@
 
@@ -84,10 +91,15 @@ $(B)/asm/%.asm: %.s
 	@mkdir -p $(dir $@)
 	cp $< $@
 
-$(B)/banked.stamp: $(COMMON_ASM) $(BANKED_ASM) tools/banker.py
+FIXED_ASM = $(B)/asm/crypto/fe_z80.asm
+$(FIXED_ASM): tools/gen_fe_z80.py
+	@mkdir -p $(dir $@)
+	$(PY) tools/gen_fe_z80.py $@
+
+$(B)/banked.stamp: $(COMMON_ASM) $(BANKED_ASM) $(FIXED_ASM) tools/banker.py
 	rm -rf $(B)/bk && mkdir -p $(B)/bk
 	$(PY) tools/banker.py --outdir $(B)/bk --thunks $(B)/bk/thunks.s --map $(B)/banks.txt --ldargs $(B)/banks.lnk --banks $(BANKS) \
-	    $(addprefix common:,$(COMMON_ASM)) $(addprefix banked:,$(BANKED_ASM))
+	    $(addprefix common:,$(COMMON_ASM)) $(addprefix banked:,$(BANKED_ASM)) fixed@$(FIXED):$(FIXED_ASM)
 	cd $(B)/bk && for f in *.asm *.s; do $(AS) -plosgff $${f%.*}.rel $$f || exit 1; done
 	touch $@
 

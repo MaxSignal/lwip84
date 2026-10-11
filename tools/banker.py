@@ -23,7 +23,13 @@ so pointers to constants are valid from every bank.
 Usage:
   banker.py --outdir DIR --thunks DIR/thunks.s [--map map.txt] [--ldargs f]
             [--bank-size N] [--banks 1-7,33-3B]
-            common:FILE.asm ... banked:FILE.asm ...
+            common:FILE.asm ... banked:FILE.asm ... fixed@3B:FILE.s ...
+
+A "fixed@PAGE" module goes to that flash page as a whole, in front of
+anything else there (keep the page out of --banks).  It can start with
+page-aligned tables and address them by absolute address (4000h + offset):
+references to data labels inside banked code would otherwise be turned
+into far calls.
 """
 
 import argparse
@@ -57,7 +63,8 @@ def split_comment(line):
 class Module:
     def __init__(self, path, kind):
         self.path = path
-        self.kind = kind          # 'common' or 'banked'
+        self.kind = kind          # 'common', 'banked' or 'fixed'
+        self.fixed = None
         self.name = re.sub(r'\W', '_', os.path.splitext(os.path.basename(path))[0])
         self.ext = os.path.splitext(path)[1]
         with open(path) as f:
@@ -85,7 +92,7 @@ class Module:
                     if lm.group(2) == ':':
                         self.statics.add(lm.group(1))
                     chunk = len(self.funcs) - 1
-                if code.strip() and chunk < 0 and self.kind == 'banked':
+                if code.strip() and chunk < 0 and self.kind != 'common':
                     sys.exit('banker: %s has code before the first label' % self.path)
                 self.chunk_of.append(chunk if code.strip() else None)
             else:
@@ -139,9 +146,14 @@ def main():
     mods = []
     for spec in a.files:
         kind, _, rest = spec.partition(':')
-        if kind not in ('common', 'banked'):
+        fixed = None
+        if kind.startswith('fixed@'):
+            fixed = int(kind[6:], 16)
+            kind = 'fixed'
+        if kind not in ('common', 'banked', 'fixed'):
             sys.exit('banker: bad spec ' + spec)
         mods.append(Module(rest, kind))
+        mods[-1].fixed = fixed
 
     # module names must be unique: qualify clashing ones with their directory
     seen = {}
@@ -161,7 +173,7 @@ def main():
     # Statics of banked modules become globally unique public symbols, so
     # that thunks and other banks can reference them.
     for m in mods:
-        if m.kind != 'banked' or not m.statics:
+        if m.kind == 'common' or not m.statics:
             continue
         ren = {s: '%s__%s' % (s, m.name) for s in m.statics}
         out = []
@@ -183,9 +195,20 @@ def main():
         lo, _, hi = part.partition('-')
         pages += range(int(lo, 16), int(hi or lo, 16) + 1)
     used = {}
+    for m in mods:
+        if m.kind == 'fixed':
+            if m.fixed in pages:
+                sys.exit('banker: fixed page %02X is also in --banks' % m.fixed)
+            m.sizes = assemble_sizes(m, a.sdas)
+            m.banks = [m.fixed] * len(m.funcs)
+            used[m.fixed] = used.get(m.fixed, 0) + sum(m.sizes)
+            if used[m.fixed] > a.bank_size:
+                sys.exit('banker: fixed page %02X overflows' % m.fixed)
     bank_idx = 0
     bank = pages[0]
     for m in mods:
+        if m.kind == 'fixed':
+            continue
         if m.kind != 'banked':
             m.banks = [0] * len(m.funcs)
             continue
@@ -217,7 +240,7 @@ def main():
             am = AREA_RE.match(code)
             if am:
                 orig_area = am.group(1)
-                if m.kind == 'banked' and orig_area in CODE_AREAS:
+                if m.kind != 'common' and orig_area in CODE_AREAS:
                     continue            # re-emitted per function below
                 out.append(code + com)
                 emitted_area = orig_area

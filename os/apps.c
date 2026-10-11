@@ -6,6 +6,9 @@
 #include "apps.h"
 #include "lwIP.h"
 #include "lwip/sntp_time.h"
+#include "x25519.h"
+#include "chacha.h"
+#include "sha256.h"
 
 static struct lwip_socket *app_sock;
 static uint8_t app_lines;          /* reply lines still to print */
@@ -46,7 +49,8 @@ static void app_start(lwip_socket_type_t type, const char *host, uint16_t port, 
         con_puts("busy\n");
         return;
     }
-    app_sock = lwip_socket_create(type, LWIP_NETIF_EXT, NULL, 30000);
+    app_sock = lwip_socket_create(type, LWIP_NETIF_EXT, NULL,
+                                  type == LWIP_SOCKET_ALTCP_TLS ? 120000u : 30000u);
     if (!app_sock) {
         con_puts("socket: no memory\n");
         return;
@@ -70,6 +74,13 @@ void app_http_get(const char *host)
     snprintf(app_req, sizeof(app_req),
              "GET / HTTP/1.0\r\nHost: %s\r\nUser-Agent: lwIP-84+\r\n\r\n", host);
     app_start(LWIP_SOCKET_TCP, host, 80, 3);
+}
+
+void app_https_get(const char *host, uint16_t port)
+{
+    snprintf(app_req, sizeof(app_req),
+             "GET / HTTP/1.0\r\nHost: %s\r\nUser-Agent: lwIP-84+\r\n\r\n", host);
+    app_start(LWIP_SOCKET_ALTCP_TLS, host, port, 4);
 }
 
 void app_download(const char *host, uint16_t port)
@@ -165,4 +176,35 @@ void app_show_time(void)
      * variadic functions, so use unsigned here */
     con_printf("%u-%02u-%02u %02u:%02u:%02u UTC\n", y, (unsigned)mo, (unsigned)d,
                (unsigned)(t / 3600u), (unsigned)((t / 60u) % 60u), (unsigned)(t % 60u));
+}
+
+/* crypto self test: RFC 7748 X25519 vector, with timing */
+void app_selftest(void)
+{
+    static const uint8_t s[32] = {
+        0xa5, 0x46, 0xe3, 0x6b, 0xf0, 0x52, 0x7c, 0x9d, 0x3b, 0x16, 0x15, 0x4b, 0x82, 0x46, 0x5e, 0xdd,
+        0x62, 0x14, 0x4c, 0x0a, 0xc1, 0xfc, 0x5a, 0x18, 0x50, 0x6a, 0x22, 0x44, 0xba, 0x44, 0x9a, 0xc4};
+    static const uint8_t u[32] = {
+        0xe6, 0xdb, 0x68, 0x67, 0x58, 0x30, 0x30, 0xdb, 0x35, 0x94, 0xc1, 0xa4, 0x24, 0xb1, 0x5f, 0x7c,
+        0x72, 0x66, 0x24, 0xec, 0x26, 0xb3, 0x35, 0x3b, 0x10, 0xa9, 0x03, 0xa6, 0xd0, 0xab, 0x1c, 0x4c};
+    static const uint8_t want[4] = {0xc3, 0xda, 0x55, 0x37};
+    uint8_t out[32], i;
+    uint32_t t;
+    x25519_ctx *c = malloc(sizeof(*c));
+    if (!c) {
+        con_puts("no memory\n");
+        return;
+    }
+    t = k_now_ms();
+    x25519_start(c, s, u);
+    for (i = 0; i < 10; i++)
+        x25519_step(c);
+    con_printf("10 steps %lu ms\n", k_now_ms() - t);
+    con_flush();
+    while (!x25519_step(c))
+        ;
+    x25519_result(c, out);
+    free(c);
+    con_printf("x25519 %s %lu ms\n", memcmp(out, want, 4) ? "FAIL" : "ok", k_now_ms() - t);
+    dbg_printf("x25519 %02x%02x%02x%02x\n", out[0], out[1], out[2], out[3]);
 }

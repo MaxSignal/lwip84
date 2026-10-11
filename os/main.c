@@ -17,6 +17,8 @@
 #include "lwip/dns.h"
 #include "lwip/ip4_addr.h"
 #include "ti84p_usb_ethernet.h"
+#include "tls84.h"
+#include "kx84.h"
 
 #define DEMO_HOST "example.com"
 
@@ -151,6 +153,8 @@ void main(void)
         usb_log_print();
         demo_poll();
         app_poll();
+        tls84_poll();
+        kx_poll();
         now = k_now_ms();
         if ((int32_t)(now - next_ui) >= 0) {
             next_ui = now + 20;
@@ -190,6 +194,15 @@ void main(void)
             break;
         case K_VARS:
             app_download(gateway_str(), 8085);
+            break;
+        case K_LOG:
+            kx_start();
+            break;
+        case K_PRGM:
+            app_selftest();
+            break;
+        case K_MATH:
+            app_https_get(gateway_str(), 4433);
             break;
         case K_MODE:
             app_sntp();
