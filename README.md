@@ -174,8 +174,7 @@ about 3 s of CPU time in emu84. The first byte of the page arrives 7.8 s
 after ENTER, of which about 3 s is a TCP retransmission of the ClientHello
 that passt causes in the emulator (it drops data sent before its own
 outbound connection is up). It used to be about 40 s plus 30 s for the key
-pair.  Over HTTP a 21 KB page loads in
-7 s.
+pair. Over HTTP a 21 KB page loads in 7 s.
 
 ### SSH client
 
