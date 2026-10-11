@@ -34,31 +34,53 @@ enum { B_IDLE, B_LOADING };
 enum { H_STATUS, H_HEADER, H_BODY, H_CHUNK_SIZE, H_CHUNK_DATA, H_CHUNK_END, H_DONE };
 enum { T_TEXT, T_TAG, T_COMMENT, T_ENTITY, T_SKIP };
 
+#define X_STATE (XRAM_BROWSER + 0xF800UL)  /* url, host, title while not running */
+
 static struct lwip_socket *sock;
 static uint8_t state, editing, redirects, hist_n;
-static char url[URL_MAX + 1], edit_buf[URL_MAX + 1], host[64];
-static char request[URL_MAX + 120];
-static struct line_edit le;
 static uint16_t nlines, top, nlinks, link_used;
 static uint32_t rx_bytes, last_draw;
-static char title[COLS + 1];
-static char msg[COLS + 1];
 
 /* HTTP */
 static uint8_t hstate, chunked, is_html, http_status, do_redirect;
 static uint32_t chunk_left;
-static char hline[128];
 static uint8_t hline_n;
-static char location[URL_MAX + 1];
 
 /* HTML renderer */
 static uint8_t tstate, in_title, skip_depth_tag, pending_space, blank_lines, in_pre;
-static char tag[200];
-static uint8_t tag_n;
-static char ent[10];
-static uint8_t ent_n;
-static char line[COLS], word[COLS];
+static uint8_t tag_n, ent_n;
 static uint8_t col, word_n, utf8_skip;
+
+/* the buffers exist only while the browser runs (browser and SSH client
+ * never run at the same time, so they share the heap); url, host and title
+ * are kept in extended RAM in between */
+struct browser_mem {
+    char url[URL_MAX + 1], host[64], title[COLS + 1];   /* saved: keep first */
+    char edit_buf[URL_MAX + 1];
+    char request[URL_MAX + 120];
+    struct line_edit le;
+    char msg[COLS + 1];
+    char hline[128];
+    char location[URL_MAX + 1];
+    char tag[200];
+    char ent[10];
+    char line[COLS], word[COLS];
+};
+#define SAVED_SIZE (URL_MAX + 1 + 64 + COLS + 1)
+static struct browser_mem *bm;
+#define url (bm->url)
+#define host (bm->host)
+#define title (bm->title)
+#define edit_buf (bm->edit_buf)
+#define request (bm->request)
+#define le (bm->le)
+#define msg (bm->msg)
+#define hline (bm->hline)
+#define location (bm->location)
+#define tag (bm->tag)
+#define ent (bm->ent)
+#define line (bm->line)
+#define word (bm->word)
 
 /* ------------------------------------------------------------------ */
 /* page storage                                                        */
@@ -199,15 +221,16 @@ static char *tag_attr(char *t, const char *name)
     return NULL;
 }
 
-static const char *const block_tags[] = {
-    "p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "table", "tr",
-    "section", "article", "header", "footer", "nav", "main", "form", "blockquote",
-    "pre", "dl", "dt", "dd", "figure", "aside", "center", "hr", NULL};
-
 static void handle_tag(void)
 {
     char *t = tag;
-    uint8_t closing = 0, i;
+    static const char block_tags_bk[] =
+        "p\0div\0h1\0h2\0h3\0h4\0h5\0h6\0ul\0ol\0table\0tr\0section\0article\0"
+        "header\0footer\0nav\0main\0form\0blockquote\0pre\0dl\0dt\0dd\0figure\0"
+        "aside\0center\0hr\0";
+    const char *b;
+    char name[12];
+    uint8_t closing = 0;
     tag[tag_n] = 0;
     if (*t == '/') {
         closing = 1;
@@ -263,14 +286,16 @@ static void handle_tag(void)
     }
     if (tag_is(t, "pre"))
         in_pre = !closing;
-    for (i = 0; block_tags[i]; i++)
-        if (tag_is(t, block_tags[i])) {
+    for (b = block_tags_bk; *b; b += strlen(b) + 1) {
+        strcpy(name, b);                /* the table is in this function's flash page */
+        if (tag_is(t, name)) {
             uint8_t heading = t[0] == 'h' && t[1] >= '1' && t[1] <= '6';
             out_break(heading || tag_is(t, "p") || tag_is(t, "hr"));
             if (tag_is(t, "hr"))
                 out_str("------------------------");
             return;
         }
+    }
 }
 
 static void text_char(char c)
@@ -298,34 +323,38 @@ static void text_char(char c)
 
 static void entity(void)
 {
-    static const char *const names[] = {"amp", "&", "lt", "<", "gt", ">", "quot", "\"",
-                                        "apos", "'", "nbsp", " ", "copy", "(c)",
-                                        "mdash", "-", "ndash", "-", "hellip", "...",
-                                        "laquo", "<<", "raquo", ">>", "middot", ".",
-                                        "rsquo", "'", "lsquo", "'", "ldquo", "\"",
-                                        "rdquo", "\"", "times", "x", NULL};
+    /* name, replacement pairs */
+    static const char names_bk[] =
+        "amp\0&\0lt\0<\0gt\0>\0quot\0\"\0apos\0'\0nbsp\0 \0copy\0(c)\0"
+        "mdash\0-\0ndash\0-\0hellip\0...\0laquo\0<<\0raquo\0>>\0middot\0.\0"
+        "rsquo\0'\0lsquo\0'\0ldquo\0\"\0rdquo\0\"\0times\0x\0";
+    const char *p;
+    char rep[4];
     uint8_t i;
     ent[ent_n] = 0;
     if (ent[0] == '#') {
         uint16_t v = 0;
-        const char *p = ent + 1;
-        if (*p == 'x' || *p == 'X') {
-            for (p++; *p; p++)
-                v = v * 16 + (*p <= '9' ? *p - '0' : (*p | 32) - 'a' + 10);
+        const char *q = ent + 1;
+        if (*q == 'x' || *q == 'X') {
+            for (q++; *q; q++)
+                v = v * 16 + (*q <= '9' ? *q - '0' : (*q | 32) - 'a' + 10);
         } else {
-            for (; *p; p++)
-                v = v * 10 + *p - '0';
+            for (; *q; q++)
+                v = v * 10 + *q - '0';
         }
         text_char(v >= 32 && v < 127 ? (char)v : v == 160 ? ' ' : '?');
         return;
     }
-    for (i = 0; names[i]; i += 2)
-        if (!strcmp(ent, names[i])) {
-            const char *s = names[i + 1];
-            while (*s)
-                text_char(*s++);
+    for (p = names_bk; *p; p += strlen(p) + 1) {
+        uint8_t hit = !strcmp(ent, p);
+        p += strlen(p) + 1;
+        if (hit) {
+            strcpy(rep, p);
+            for (i = 0; rep[i]; i++)
+                text_char(rep[i]);
             return;
         }
+    }
     text_char('&');
     for (i = 0; i < ent_n; i++)
         text_char(ent[i]);
@@ -689,6 +718,8 @@ static void draw(void)
     ui_clear();
     if (editing) {
         snprintf(buf, sizeof(buf), "%c %s", in_mode_char(), editing == 1 ? "URL" : "link");
+    } else if (state == B_LOADING && !rx_bytes && tls84_status(buf, sizeof(buf))) {
+        /* key exchange progress */
     } else if (state == B_LOADING) {
         snprintf(buf, sizeof(buf), "%s %luB", msg, rx_bytes);
     } else if (msg[0]) {
@@ -716,8 +747,18 @@ static void draw(void)
     lcd_update();
 }
 
-void browser_enter(void)
+/* returns 0 if there is not enough memory */
+uint8_t browser_enter(void)
 {
+    static uint8_t saved;
+    if (!bm) {
+        bm = calloc(1, sizeof(*bm));
+        if (!bm)
+            return 0;
+        if (saved)
+            xram_read(X_STATE, bm, SAVED_SIZE);
+        saved = 1;
+    }
     if (!url[0] && !editing) {
         editing = 1;
         strcpy(edit_buf, "http://");
@@ -725,12 +766,22 @@ void browser_enter(void)
         in_mode = IN_LOWER;
     }
     draw();
+    return 1;
+}
+
+static void browser_leave(void)
+{
+    stop();
+    editing = 0;
+    xram_write(X_STATE, bm, SAVED_SIZE);
+    free(bm);
+    bm = NULL;
 }
 
 /* returns 0 when the browser wants to quit */
 uint8_t browser_key(uint8_t k)
 {
-    if (k == K_NONE)
+    if (k == K_NONE || !bm)
         return 1;
     if (editing) {
         int8_t r = le_key(&le, k);
@@ -763,7 +814,7 @@ uint8_t browser_key(uint8_t k)
     msg[0] = state == B_LOADING ? msg[0] : 0;
     switch (k) {
     case K_MODE:
-        stop();
+        browser_leave();
         return 0;
     case K_YEQU:
         editing = 1;
@@ -826,7 +877,7 @@ void browser_poll(void)
 {
     uint8_t buf[64];
     size_t n, i;
-    if (state != B_LOADING || !sock)
+    if (!bm || state != B_LOADING || !sock)
         return;
     while ((n = lwip_socket_available(sock)) != 0) {
         n = lwip_socket_read(sock, buf, n > sizeof(buf) ? sizeof(buf) : n);
@@ -855,7 +906,7 @@ void browser_poll(void)
             msg[0] = 0;
         last_draw = k_now_ms() - 1000;  /* show the result now */
     }
-    if (!editing && (uint32_t)(k_now_ms() - last_draw) > 700) {
+    if (!editing && (uint32_t)(k_now_ms() - last_draw) > 1000) {
         last_draw = k_now_ms();
         draw();
     }

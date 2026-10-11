@@ -3,4 +3,6 @@
 #define TI84P_TLS84_H
 extern const char *tls84_last_error;
 void tls84_poll(void);
+#include <stdint.h>
+const char *tls84_status(char *buf, uint8_t n);   /* NULL when nothing to show */
 #endif

@@ -9,6 +9,7 @@ void kx_start(void);                    /* begin generating in the background */
 bool kx_run(uint16_t budget_ms);        /* work on it now; true when ready */
 void kx_poll(void);                     /* main loop: a little background work */
 bool kx_ready(void);
+uint8_t kx_progress(void);
 const uint8_t *kx_priv(void);
 const uint8_t *kx_pub(void);
 /* advance a shared-secret computation for up to budget_ms */

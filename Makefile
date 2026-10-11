@@ -45,7 +45,7 @@ DEFS    =
 endif
 
 CFLAGS  = -mz80 --std-sdcc11 --opt-code-size --constseg CONST $(DEFS) \
-          -DLWIP_PORT_TI84P=1 -DFE_ASM -DLWIP_TLS_FLOOR_BYTES=0u '-D__attribute__(x)=' \
+          -DLWIP_PORT_TI84P=1 -DFE_ASM -DLWIP_TRACEBACK_DEPTH=4u -DLWIP_TLS_FLOOR_BYTES=0u '-D__attribute__(x)=' \
           -I include -I os -I port -I crypto -I ../src/include -I ../src
 
 # modules that must stay in page 0 (interrupt path, runtime)

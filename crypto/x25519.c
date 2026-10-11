@@ -306,3 +306,11 @@ void x25519(uint8_t out[32], const uint8_t scalar[32], const uint8_t point[32])
     x25519_result(&c, out);
 }
 #endif
+
+/* rough progress in percent (the ladder is about 90% of the work) */
+uint8_t x25519_progress(const x25519_ctx *c)
+{
+    if (c->phase == 0)
+        return (uint8_t)((uint16_t)(254 - c->bit) * 90u / 255u);
+    return (uint8_t)(90u + c->ip * 10u / INV_LEN);
+}

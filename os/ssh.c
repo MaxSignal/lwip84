@@ -39,8 +39,6 @@ static const char version[] = "SSH-2.0-lwIP84_1.0";
 
 static struct lwip_socket *sock;
 static uint8_t st, field, ctrl_next, kbd_int, got_newkeys, enc_out, enc_in;
-static char f_host[48], f_user[32], f_pass[48], msg[CON_COLS + 1];
-static struct line_edit le;
 static uint16_t port, back;
 
 static uint8_t *rx, *pb;                /* receive buffer, payload builder */
@@ -48,10 +46,33 @@ static uint16_t rx_n, pb_n, discard;
 static uint32_t seq_out, seq_in;
 static sha256_ctx *xh;                  /* exchange hash in progress */
 static x25519_ctx *kex;
-static uint8_t h[32], sid[32], peer_pub[32];
-static uint8_t k1_out[32], k2_out[32], k1_in[32], k2_in[32];
 static uint32_t remote_chan, remote_window, local_window_used;
 static uint32_t next_draw;
+
+/* allocated while the SSH client runs; host and user are kept in extended
+ * RAM in between */
+#define X_STATE (XRAM_CON + 0xC00UL)
+struct ssh_mem {
+    char f_host[48], f_user[32];        /* saved: keep first */
+    char f_pass[48], msg[CON_COLS + 1];
+    struct line_edit le;
+    uint8_t h[32], sid[32], peer_pub[32];
+    uint8_t k1_out[32], k2_out[32], k1_in[32], k2_in[32];
+};
+#define SAVED_SIZE (48 + 32)
+static struct ssh_mem *sm;
+#define f_host (sm->f_host)
+#define f_user (sm->f_user)
+#define f_pass (sm->f_pass)
+#define msg (sm->msg)
+#define le (sm->le)
+#define h (sm->h)
+#define sid (sm->sid)
+#define peer_pub (sm->peer_pub)
+#define k1_out (sm->k1_out)
+#define k2_out (sm->k2_out)
+#define k1_in (sm->k1_in)
+#define k2_in (sm->k2_in)
 
 /* ------------------------------------------------------------------ */
 /* helpers                                                             */
@@ -670,10 +691,10 @@ static void draw(void)
     } else {
         if (st == S_OPEN && !msg[0])
             snprintf(b, sizeof(b), "%c%s %s", in_mode_char(), ctrl_next ? "^" : " ", f_host);
-        else if (st == S_COMPUTE)
-            snprintf(b, sizeof(b), "key exchange %u%%",
-                     kex ? (unsigned)((254 - (kex->bit < 0 ? 0 : kex->bit)) * 100u / 255u)
-                         : 100u);
+        else if (st == S_COMPUTE && kex)
+            snprintf(b, sizeof(b), "key exchange %u%%", x25519_progress(kex));
+        else if ((st == S_VERSION || st == S_KEXINIT) && !kx_ready())
+            snprintf(b, sizeof(b), "key pair %u%%", kx_progress());
         else
             snprintf(b, sizeof(b), "%c %s", in_mode_char(), msg);
         ui_status(b);
@@ -682,14 +703,41 @@ static void draw(void)
     lcd_update();
 }
 
-void ssh_enter(void)
+/* returns 0 if there is not enough memory */
+uint8_t ssh_enter(void)
 {
+    static uint8_t saved;
+    if (!sm) {
+        sm = calloc(1, sizeof(*sm));
+        if (!sm || !term_open()) {
+            free(sm);
+            sm = NULL;
+            return 0;
+        }
+        if (saved)
+            xram_read(X_STATE, sm, SAVED_SIZE);
+        saved = 1;
+        st = S_IDLE;
+    }
     if (st == S_IDLE || st == S_CLOSED) {
         st = S_IDLE;
         start_field(F_HOST);
     }
     kx_start();                         /* the key pair is needed soon */
     draw();
+    return 1;
+}
+
+static void ssh_leave(void)
+{
+    cleanup();
+    st = S_IDLE;
+    memset(f_pass, 0, sizeof(f_pass));
+    xram_write(X_STATE, sm, SAVED_SIZE);
+    memset(sm, 0, sizeof(*sm));
+    free(sm);
+    sm = NULL;
+    term_close();
 }
 
 static void send_keys(const uint8_t *s, uint8_t n)
@@ -707,13 +755,12 @@ uint8_t ssh_key(uint8_t k)
 {
     uint8_t buf[4];
     int16_t c;
-    if (k == K_NONE)
+    if (k == K_NONE || !sm)
         return 1;
     if (field != F_NONE) {
         int8_t r = le_key(&le, k);
         if (r == LE_CANCEL) {
-            cleanup();
-            st = S_IDLE;
+            ssh_leave();
             return 0;
         }
         if (r == LE_DONE) {
@@ -731,8 +778,7 @@ uint8_t ssh_key(uint8_t k)
     }
     if (in_2nd && k == K_MODE) {        /* QUIT */
         in_2nd = 0;
-        cleanup();
-        st = S_IDLE;
+        ssh_leave();
         return 0;
     }
     if (in_2nd && (k == K_UP || k == K_DOWN)) {
@@ -782,20 +828,17 @@ uint8_t ssh_key(uint8_t k)
 
 void ssh_poll(void)
 {
-    if (!sock)
+    if (!sm || !sock)
         return;
     if (st == S_COMPUTE) {
         if (kex && kx_shared_step(kex, 40)) {
             kex_done();
             rx_process();               /* NEWKEYS may already be waiting */
         }
-    } else if (st == S_VERSION || st == S_KEXINIT) {
-        if (!kx_ready()) {              /* the shared key pair must exist first */
-            kx_run(40);
-            return;
-        }
+    } else if ((st == S_VERSION || st == S_KEXINIT) && !kx_ready()) {
+        kx_run(40);                     /* the shared key pair must exist first */
     }
-    while (sock && st != S_COMPUTE) {
+    while (sock && st != S_COMPUTE && (kx_ready() || st > S_KEXINIT)) {
         size_t n = lwip_socket_available(sock);
         if (!n)
             break;

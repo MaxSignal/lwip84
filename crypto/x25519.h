@@ -26,6 +26,7 @@ void x25519_start(x25519_ctx *c, const uint8_t scalar[32], const uint8_t point[3
  * Z80 assembly); returns true when the result is ready */
 bool x25519_step(x25519_ctx *c);
 void x25519_result(x25519_ctx *c, uint8_t out[32]);
+uint8_t x25519_progress(const x25519_ctx *c);
 /* blocking convenience (host tests) */
 void x25519(uint8_t out[32], const uint8_t scalar[32], const uint8_t point[32]);
 

@@ -22,7 +22,6 @@ void lcd_invert_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h);
 void lcd_draw_char(uint8_t x, uint8_t y, char c);
 void lcd_draw_text(uint8_t x, uint8_t y, const char *s);
 void con_clear(void);
-void con_goto(uint8_t col, uint8_t row);
 void con_putc(char c);
 void con_puts(const char *s);
 void con_printf(const char *fmt, ...);
@@ -60,7 +59,8 @@ void far_read(uint8_t page, uint16_t addr, void *dst, uint16_t len);
  * terminal scrollback); buffers passed here must lie in 8000h-FFFFh */
 #define XRAM_SIZE 0x18000UL
 #define XRAM_BROWSER 0x00000UL          /* 64 KiB: web page text and links */
-#define XRAM_SSH 0x10000UL              /* 32 KiB: terminal scrollback */
+#define XRAM_SSH 0x10000UL              /* 24 KiB: terminal scrollback */
+#define XRAM_CON 0x16000UL              /* 3 KiB: console history */
 void xram_read(uint32_t addr, void *dst, uint16_t len);
 void xram_write(uint32_t addr, const void *src, uint16_t len);
 

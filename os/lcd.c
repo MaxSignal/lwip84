@@ -6,11 +6,14 @@
 #include "font3x5.c"
 
 uint8_t lcd_buf[768];          /* 64 rows x 12 bytes, MSB = leftmost pixel */
-static uint8_t con_x, con_y;
+/* console: the line being written is in RAM, older lines in a ring in
+ * extended RAM (XRAM_CON) */
+#define CON_HIST 128u           /* lines kept for scrolling back */
+static char con_cur[CON_COLS];
+static uint8_t con_x;           /* CON_COLS: a newline is pending */
+static uint16_t con_lines;      /* lines moved to the history */
 static uint8_t con_dirty;
-#define CON_HIST 32             /* lines kept for scrolling back */
-static char con_text[CON_HIST][CON_COLS];
-static uint8_t con_view;          /* lines scrolled back from the bottom */
+static uint8_t con_view;        /* lines scrolled back from the bottom */
 static char con_stat[CON_COLS + 1];
 
 /* The LCD driver needs about 10 us between accesses.  A fixed delay works
@@ -139,17 +142,36 @@ void lcd_draw_text(uint8_t x, uint8_t y, const char *s)
 
 static void con_redraw(void)
 {
+    char line[CON_COLS + 1];
     uint8_t r, c;
+    int16_t first;                      /* history line shown on row 0; con_lines = con_cur */
     lcd_clear();
     lcd_draw_text(1, 1, con_stat);
     lcd_invert_rect(0, 0, 96, 7);
-    int8_t top = (int8_t)con_y - (CON_ROWS - 1) - con_view;
-    if (top < 0)
-        top = 0;
-    for (r = 0; r < CON_ROWS && top + r < CON_HIST; r++)
+    first = (int16_t)con_lines - (CON_ROWS - 1) - con_view;
+    if (first < 0)
+        first = 0;
+    for (r = 0; r < CON_ROWS; r++) {
+        uint16_t n = (uint16_t)first + r;
+        if (n > con_lines)
+            break;
+        if (n == con_lines)
+            memcpy(line, con_cur, CON_COLS);
+        else
+            xram_read(XRAM_CON + (uint32_t)(n % CON_HIST) * CON_COLS, line, CON_COLS);
         for (c = 0; c < CON_COLS; c++)
-            if (con_text[top + r][c] != ' ')
-                lcd_draw_char(c * 4, r * 6 + 9, con_text[top + r][c]);
+            if (line[c] != ' ')
+                lcd_draw_char(c * 4, r * 6 + 9, line[c]);
+    }
+}
+
+static void con_newline(void)
+{
+    xram_write(XRAM_CON + (uint32_t)(con_lines % CON_HIST) * CON_COLS, con_cur, CON_COLS);
+    con_lines++;
+    memset(con_cur, ' ', CON_COLS);
+    con_x = 0;
+    con_dirty = 1;
 }
 
 void con_status(const char *s)
@@ -161,48 +183,26 @@ void con_status(const char *s)
 
 void con_clear(void)
 {
-    memset(con_text, ' ', sizeof(con_text));
-    con_x = con_y = 0;
+    memset(con_cur, ' ', CON_COLS);
+    con_x = 0;
+    con_lines = 0;
     con_view = 0;
     con_dirty = 1;
-}
-
-void con_goto(uint8_t col, uint8_t row)
-{
-    con_x = col;
-    con_y = row;
 }
 
 void con_putc(char c)
 {
     if (c == '\n') {
+        if (con_x == CON_COLS)
+            con_newline();
         con_x = CON_COLS;
     } else if (c == '\r') {
         con_x = 0;
-        return;
     } else {
-        if (con_x >= CON_COLS) {
-            con_x = 0;
-            con_y++;
-        }
-        if (con_y >= CON_HIST) {
-            memmove(con_text[0], con_text[1], (CON_HIST - 1) * CON_COLS);
-            memset(con_text[CON_HIST - 1], ' ', CON_COLS);
-            con_y = CON_HIST - 1;
-        }
-        con_text[con_y][con_x++] = c;
+        if (con_x >= CON_COLS)
+            con_newline();
+        con_cur[con_x++] = c;
         con_dirty = 1;
-        return;
-    }
-    if (con_x >= CON_COLS) {
-        con_x = 0;
-        con_y++;
-        if (con_y >= CON_HIST) {
-            memmove(con_text[0], con_text[1], (CON_HIST - 1) * CON_COLS);
-            memset(con_text[CON_HIST - 1], ' ', CON_COLS);
-            con_y = CON_HIST - 1;
-            con_dirty = 1;
-        }
     }
 }
 
@@ -225,16 +225,16 @@ void con_printf(const char *fmt, ...)
 /* UP/DOWN: look at older lines */
 void con_scroll(int8_t d)
 {
-    int8_t v = (int8_t)con_view + d;
-    int8_t max = (int8_t)con_y - (CON_ROWS - 1);
+    int16_t v = (int16_t)con_view + d;
+    int16_t max = (int16_t)(con_lines < CON_HIST ? con_lines : CON_HIST) - (CON_ROWS - 1);
     if (max < 0)
         max = 0;
     if (v < 0)
         v = 0;
     if (v > max)
         v = max;
-    if (v != (int8_t)con_view) {
-        con_view = v;
+    if (v != (int16_t)con_view) {
+        con_view = (uint8_t)v;
         con_dirty = 1;
     }
 }

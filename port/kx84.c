@@ -85,3 +85,9 @@ bool kx_shared_step(x25519_ctx *c, uint16_t budget_ms)
     } while ((uint16_t)(k_now_ms() - t0) < budget_ms);
     return false;
 }
+
+/* progress of the key pair generation in percent */
+uint8_t kx_progress(void)
+{
+    return kx_state == 2 ? 100 : gen ? x25519_progress(gen) : 0;
+}

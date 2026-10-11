@@ -5,6 +5,8 @@
 #define TERM_COLS 24
 #define TERM_ROWS 9
 extern uint8_t term_dirty;
+uint8_t term_open(void);         /* allocate the screen; 0: no memory */
+void term_close(void);
 void term_reset(void);
 void term_write(const uint8_t *s, uint16_t n);
 void term_draw(uint16_t back);

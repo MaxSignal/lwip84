@@ -26,10 +26,10 @@
 #include "ui.h"
 #include "rng.h"
 
-void browser_enter(void);
+uint8_t browser_enter(void);
 uint8_t browser_key(uint8_t k);
 void browser_poll(void);
-void ssh_enter(void);
+uint8_t ssh_enter(void);
 uint8_t ssh_key(uint8_t k);
 void ssh_poll(void);
 
@@ -152,7 +152,11 @@ static void menu_draw(void)
     ui_text(2, " 2  SSH client");
     ui_text(3, " 3  Network console");
     ui_text(5, " 2nd+ON  power off");
-    ui_text(7, kx_ready() ? " key pair ready" : " key pair: computing");
+    {
+        char b[CON_COLS + 1];
+        snprintf(b, sizeof(b), kx_ready() ? " key pair ready" : " key pair: %u%%", kx_progress());
+        ui_text(7, b);
+    }
     lcd_update();
 }
 
@@ -160,12 +164,17 @@ static void app_switch(uint8_t a)
 {
     app = a;
     if (a == A_MENU)
+        kx_start();                     /* the browser or SSH will want the key pair */
+    if ((a == A_WEB && !browser_enter()) || (a == A_SSH && !ssh_enter())) {
+        app = A_MENU;
         menu_draw();
-    else if (a == A_WEB)
-        browser_enter();
-    else if (a == A_SSH)
-        ssh_enter();
-    else
+        ui_text(8, " not enough memory");
+        lcd_update();
+        return;
+    }
+    if (a == A_MENU)
+        menu_draw();
+    else if (a == A_CONSOLE)
         con_refresh();
 }
 

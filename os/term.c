@@ -3,6 +3,7 @@
  * Handles printable ASCII, CR, LF, BS, TAB, cursor movement, erase and
  * scrolling regions are ignored; colours and modes are swallowed.
  * Lines scrolled off the top go to a scrollback ring in extended RAM. */
+#include <stdlib.h>
 #include <string.h>
 #include "kernel.h"
 #include "ui.h"
@@ -12,15 +13,30 @@
 #define H TERM_ROWS
 #define SB_LINES 1024u                  /* 24 KiB scrollback */
 
-static char scr[H][W];
+static char (*scr)[W];                  /* H rows, allocated by term_open */
 static uint8_t cx, cy, esc, nparam, utf8_skip, wrap_pending;
 static uint8_t param[4];
 static uint16_t sb_head, sb_count;      /* scrollback ring */
 uint8_t term_dirty;
 
+uint8_t term_open(void)
+{
+    if (!scr)
+        scr = malloc(H * W);
+    if (scr)
+        term_reset();
+    return scr != NULL;
+}
+
+void term_close(void)
+{
+    free(scr);
+    scr = NULL;
+}
+
 void term_reset(void)
 {
-    memset(scr, ' ', sizeof(scr));
+    memset(scr, ' ', H * W);
     cx = cy = esc = 0;
     wrap_pending = 0;
     sb_head = sb_count = 0;
@@ -88,7 +104,7 @@ static void csi(char f)
         } else if (i == 1) {
             memset(scr[0], ' ', cy * W + cx + 1);
         } else {
-            memset(scr, ' ', sizeof(scr));
+            memset(scr, ' ', H * W);
         }
         break;
     case 'K':
@@ -126,6 +142,8 @@ static void csi(char f)
 
 void term_write(const uint8_t *s, uint16_t n)
 {
+    if (!scr)
+        return;
     term_dirty = 1;
     while (n--) {
         uint8_t c = *s++;

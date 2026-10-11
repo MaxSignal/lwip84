@@ -941,3 +941,20 @@ void *tls_random_bytes(void *buffer, size_t len)
     rng_bytes(buffer, len);
     return buffer;
 }
+
+/* what the newest TLS connection is doing, for status lines */
+const char *tls84_status(char *buf, uint8_t n)
+{
+    struct tls84 *st = tls_list;
+    if (!st)
+        return NULL;
+    if (st->phase == P_WAIT_KEY)
+        snprintf(buf, n, "TLS: key pair %u%%", kx_progress());
+    else if (st->phase == P_KEX && st->kex)
+        snprintf(buf, n, "TLS: key exchange %u%%", x25519_progress(st->kex));
+    else if (st->phase < P_APP)
+        snprintf(buf, n, "TLS: handshake");
+    else
+        return NULL;
+    return buf;
+}
