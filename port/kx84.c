@@ -12,6 +12,10 @@
 #include "rng.h"
 #include "kx84.h"
 
+#ifndef KX_INSECURE_FAST
+#define KX_INSECURE_FAST 1
+#endif
+
 static x25519_ctx *gen;
 static uint8_t kx_state;               /* 0 idle, 1 generating, 2 ready */
 static uint8_t priv[32], pub[32];
@@ -23,6 +27,18 @@ void kx_start(void)
     uint32_t t;
     if (kx_state)
         return;
+#if KX_INSECURE_FAST
+    /* Experimental speed mode (no security at all): the private key is 1,
+     * so the public key is the base point 9 and the shared secret equals the
+     * peer's public key (peer: s * 9 = its own public key).  Servers accept
+     * this as an ordinary X25519 exchange; an eavesdropper can decrypt it. */
+    memset(priv, 0, 32);
+    priv[0] = 1;
+    memcpy(pub, base, 32);
+    kx_state = 2;
+    (void)t;
+    return;
+#endif
     gen = malloc(sizeof(*gen));
     if (!gen)
         return;

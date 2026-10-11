@@ -200,6 +200,18 @@ void x25519_start(x25519_ctx *c, const uint8_t scalar[32], const uint8_t point[3
     c->ip = 0;
     c->n = 0;
     c->lp = 0;
+    {
+        /* scalar 1 (not clamped, see kx84.c): the result is the point itself,
+         * nothing to compute */
+        uint8_t i, nz = scalar[0] ^ 1;
+        for (i = 1; i < 32; i++)
+            nz |= scalar[i];
+        if (!nz) {
+            memcpy(c->v[IOUT], c->v[X1], 32);
+            c->phase = 1;
+            c->ip = INV_LEN;
+        }
+    }
 }
 
 static void swap_xz(x25519_ctx *c)

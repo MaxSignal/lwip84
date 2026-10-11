@@ -6,7 +6,7 @@
  *        Y= status        WINDOW ping gateway    ZOOM DNS lookup
  *        TRACE HTTP GET   GRAPH TCP echo (gateway:8084)
  *        MODE SNTP sync   STAT show time   VARS download test (gateway:8085)
- *        MATH HTTPS GET (gateway:4433)   PRGM X25519 self test
+ *        MATH HTTPS GET (gateway:4433), 2nd+MATH https://example.com/   PRGM X25519 self test
  *        CLEAR clear      UP/DOWN scroll back   2nd+ON power off
  */
 #include <string.h>
@@ -300,7 +300,11 @@ void main(void)
             app_selftest();
             break;
         case K_MATH:
-            app_https_get(gateway_str(), 4433);
+            /* 2nd, MATH: a real site over the Internet */
+            if (in_2nd)
+                app_https_get("example.com", 443);
+            else
+                app_https_get(gateway_str(), 4433);
             break;
         case K_MODE:
             app_sntp();

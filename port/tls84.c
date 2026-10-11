@@ -59,6 +59,7 @@ struct tls84 {
     uint8_t c_key[32], c_iv[12], s_key[32], s_iv[12];
     uint32_t c_seq, s_seq;
     x25519_ctx *kex;
+    uint32_t t_hello;                   /* for the debug log */
     struct pbuf *rx, *app;
     uint16_t to_ack, overhead;
     char host[DNS_MAX_NAME_LENGTH + 1];
@@ -234,6 +235,7 @@ static void send_client_hello(struct tls84 *st)
         altcp_output(st->conn->inner_conn);
     free(m);
     st->phase = P_WAIT_SH;
+    st->t_hello = k_now_ms();
 }
 
 /* ------------------------------------------------------------------ */
@@ -290,7 +292,7 @@ static void server_finished(struct tls84 *st)
     tls_secure_memzero(st->c_hs, 32);
     tls_secure_memzero(sec, 32);
     st->phase = P_APP;
-    dbg_printf("tls: handshake done\n");
+    dbg_printf("tls: handshake done after %lu ms\n", k_now_ms() - st->t_hello);
     if (st->conn->connected)
         st->conn->connected(st->conn->arg, st->conn, ERR_OK);
 }
@@ -338,8 +340,10 @@ static void dispatch(struct tls84 *st, uint8_t type, const uint8_t *p, uint16_t 
         st->eof = 1;                    /* close_notify */
     else if (type == 21)
         fail(st, "alert from server");
-    else
+    else {
+        dbg_printf("tls: inner type %u n %u phase %u\n", type, n, st->phase);
         fail(st, "unexpected record");
+    }
 }
 
 /* streamed records: hold back the last non-zero byte (the content type)
@@ -470,8 +474,10 @@ static void rec_start(struct tls84 *st)
             st->rstate = R_PLAIN;
         else if (type == 21)
             fail(st, "handshake refused (alert)");
-        else
+        else {
+            dbg_printf("tls: record type %u len %u before ServerHello\n", type, len);
             fail(st, "unexpected record");
+        }
     } else if (type == 23 && len > 16) {
         uint8_t nonce[12];
         mknonce(nonce, st->s_iv, st->s_seq);
@@ -485,6 +491,7 @@ static void rec_start(struct tls84 *st)
         st->stream_type = st->phase == P_HS ? 22 : 23;
         st->rstate = R_BODY;
     } else {
+        dbg_printf("tls: record type %u len %u phase %u\n", type, len, st->phase);
         fail(st, "unexpected record");
     }
 }

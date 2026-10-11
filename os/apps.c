@@ -210,6 +210,22 @@ void app_selftest(void)
                 sha256_update(&sc, buf, 1024);
             sha256_final(&sc, out);
             con_printf("sha256 4KB %lu ms\n", k_now_ms() - t);
+            {
+                uint8_t d[32];
+                static const char msg_bk[] = "abc";
+                char m[4];
+                memcpy(m, msg_bk, 4);
+                sha256(m, 3, d);
+                dbg_printf("sha abc %02x%02x%02x%02x\n", d[0], d[1], d[2], d[3]);
+                __asm__("di");
+                sha256(m, 3, d);
+                __asm__("ei");
+                dbg_printf("sha abc di %02x%02x%02x%02x\n", d[0], d[1], d[2], d[3]);
+                for (k = 0; k < 200; k++)
+                    buf[k] = (uint8_t)k;
+                sha256(buf, 200, d);
+                dbg_printf("sha 200 %02x%02x%02x%02x\n", d[0], d[1], d[2], d[3]);
+            }
             t = k_now_ms();
             poly1305_init(&pc, buf);
             poly1305_update(&pc, buf, 1024);

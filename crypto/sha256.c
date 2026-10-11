@@ -2,6 +2,7 @@
 #include <string.h>
 #include "sha256.h"
 
+#if !defined(FE_ASM) || defined(SHA_C)
 static const uint32_t K_bk[64] = {
     0x428a2f98UL, 0x71374491UL, 0xb5c0fbcfUL, 0xe9b5dba5UL, 0x3956c25bUL, 0x59f111f1UL,
     0x923f82a4UL, 0xab1c5ed5UL, 0xd807aa98UL, 0x12835b01UL, 0x243185beUL, 0x550c7dc3UL,
@@ -14,12 +15,26 @@ static const uint32_t K_bk[64] = {
     0x19a4c116UL, 0x1e376c08UL, 0x2748774cUL, 0x34b0bcb5UL, 0x391c0cb3UL, 0x4ed8aa4aUL,
     0x5b9cca4fUL, 0x682e6ff3UL, 0x748f82eeUL, 0x78a5636fUL, 0x84c87814UL, 0x8cc70208UL,
     0x90befffaUL, 0xa4506cebUL, 0xbef9a3f7UL, 0xc67178f2UL};
+#endif
 
 static const uint32_t H0_bk[8] = {0x6a09e667UL, 0xbb67ae85UL, 0x3c6ef372UL, 0xa54ff53aUL,
                                0x510e527fUL, 0x9b05688cUL, 0x1f83d9abUL, 0x5be0cd19UL};
 
 #define ROTR(x, n) (((x) >> (n)) | ((x) << (32 - (n))))
 
+#if defined(FE_ASM) && !defined(SHA_C)
+/* Z80 assembly (tools/gen_sha256_z80.py) on the fixed crypto page */
+uint32_t *sha_h;
+const uint8_t *sha_p;
+void sha256_block_core(void);
+
+static void compress(uint32_t *h, const uint8_t *p)
+{
+    sha_h = h;
+    sha_p = p;
+    sha256_block_core();
+}
+#else
 static void compress(uint32_t *h, const uint8_t *p)
 {
     uint32_t w[16], a, b, c, d, e, f, g, hh, t1, t2;
@@ -46,6 +61,7 @@ static void compress(uint32_t *h, const uint8_t *p)
     h[0] += a; h[1] += b; h[2] += c; h[3] += d;
     h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
 }
+#endif
 
 void sha256_init(sha256_ctx *c)
 {
