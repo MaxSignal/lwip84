@@ -17,7 +17,9 @@
 uint8_t usb_state;
 uint8_t usb_alt;
 uint8_t usb_last_error;
+uint32_t usb_last_activity;
 static uint8_t usb_config;
+static uint32_t usb_next_check;
 
 /* ------------------------------------------------------------------ */
 /* descriptors                                                         */
@@ -410,6 +412,23 @@ void usb_poll(void)
     usb_ev_bus = 0;
     __asm__("ei");
 
+    /* every 100 ms: cable/VBus check and re-arming of masked interrupts */
+    if ((int32_t)(k_now_ms() - usb_next_check) >= 0) {
+        usb_next_check = k_now_ms() + 100;
+        if (usb_irq_masked) {
+            usb_irq_masked = 0;
+            port_usb_proto_ie = 1;
+        }
+        if (!(port_usb_lines & 0x40) && usb_state > USB_WAIT_HOST) {
+            dbg_printf("usb: VBus lost\n");
+            ep0_state = EP0_IDLE;
+            pending_addr = 0;
+            usb_config = 0;
+            usb_alt = 0;
+            ncm_enable(0);
+            usb_state = USB_WAIT_HOST;
+        }
+    }
     if (bus & 0x04) {                   /* bus reset */
         dbg_printf("usb: bus reset\n");
         port_usb_faddr = 0;
@@ -445,6 +464,7 @@ void usb_poll(void)
         }
     }
     if (csr & CSR0_RXPKTRDY) {
+        usb_last_activity = k_now_ms();
         if (usb_state == USB_WAIT_HOST)
             usb_state = USB_DEFAULT;
         ep0_rx();

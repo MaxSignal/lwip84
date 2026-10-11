@@ -4,10 +4,17 @@
 #include "usb.h"
 
 volatile uint32_t k_ticks;
+static volatile uint32_t k_ms;          /* milliseconds, advanced by 125/64 per tick */
+static uint8_t k_ms_frac;
 volatile uint8_t k_on_pressed;
 volatile uint8_t usb_ev_tx, usb_ev_rx, usb_ev_bus, usb_ev_line;
 
-/* USB: latch the read-to-clear event registers for usb_poll() */
+volatile uint8_t usb_irq_masked;
+
+/* USB: latch the read-to-clear event registers for usb_poll().  If a source
+ * stays asserted after that (behaviour not documented for every bit), mask
+ * USB interrupts so the CPU cannot get stuck in the handler; usb_poll()
+ * re-enables them. */
 static void usb_irq(void)
 {
     uint8_t st = port_usb_int;
@@ -22,6 +29,11 @@ static void usb_irq(void)
         port_usb_line_mask = 0;          /* acknowledge */
         port_usb_line_mask = m;
     }
+    if ((port_usb_int & 0x1F) != 0x1F) {
+        port_usb_proto_ie = 0;
+        port_usb_line_mask = 0;
+        usb_irq_masked = 1;
+    }
 }
 
 void isr(void)
@@ -29,6 +41,9 @@ void isr(void)
     uint8_t id = port_int_id;
     if (id & INT_TIMER1) {
         k_ticks++;
+        k_ms_frac += 125;               /* 512 Hz: 1.953125 ms per tick */
+        k_ms += k_ms_frac >> 6;
+        k_ms_frac &= 63;
         port_int_mask = INT_ON | INT_POWER;              /* acknowledge */
         port_int_mask = INT_ON | INT_TIMER1 | INT_POWER;
     }
@@ -45,7 +60,7 @@ uint32_t k_now_ms(void)
 {
     uint32_t t;
     __asm__("di");
-    t = k_ticks;
+    t = k_ms;
     __asm__("ei");
-    return (t * 125u) >> 6;
+    return t;
 }

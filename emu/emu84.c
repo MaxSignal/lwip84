@@ -523,6 +523,15 @@ static void run_ps(uint64_t dur)
                 port_out(Z80_GET_ADDR(pins) & 0xFF, Z80_GET_DATA(pins));
             }
         }
+        if (ti.profiling) {
+            if (pins & Z80_HALT)
+                ti.halt_cycles++;
+            if (++ti.prof_cycles % 97 == 0) {
+                uint16_t pc = ti.cpu.pc;
+                uint32_t bank = pc >= 0x4000 && pc < 0x8000 ? ti.bank_a : 0;
+                ti.prof[(bank << 16) | pc]++;
+            }
+        }
         ti.now_ps += ps_per_tick();
         if (ti.now_ps >= ti.next_event)
             run_events();
@@ -614,6 +623,24 @@ static int do_command(char *line)
         if (f) {
             fwrite(ti.ram, 1, sizeof(ti.ram), f);
             fclose(f);
+        }
+    } else if (!strcmp(argv[0], "profile") && argc > 1) {
+        /* profile on | profile FILE: write "bank:pc count" lines */
+        if (!strcmp(argv[1], "on")) {
+            if (!ti.prof)
+                ti.prof = calloc(256u << 16, sizeof(uint32_t));
+            ti.profiling = 1;
+        } else if (ti.prof) {
+            FILE *f = fopen(argv[1], "w");
+            ti.profiling = 0;
+            if (f) {
+                fprintf(f, "# cycles %llu halted %llu\n", (unsigned long long)ti.prof_cycles,
+                        (unsigned long long)ti.halt_cycles);
+                for (uint32_t i = 0; i < (256u << 16); i++)
+                    if (ti.prof[i])
+                        fprintf(f, "%02X:%04X %u\n", i >> 16, i & 0xFFFF, ti.prof[i]);
+                fclose(f);
+            }
         }
     } else if (!strcmp(argv[0], "regs")) {
         print_regs();

@@ -188,6 +188,7 @@ static void rx_poll(void)
         rx_len += n;
     }
     port_usb_rxcsr = 0;             /* packet unloaded */
+    usb_last_activity = k_now_ms();
     if (n < EP_BULK_SIZE || rx_len >= NTB_OUT_MAX) {
         if (rx_drop) {
             ncm_stats.rx_bad++;
@@ -291,6 +292,7 @@ static void tx_poll(void)
         tx_zlp = 0;
     else
         USB_WRITE(EP_BULK, tx_ntb + tx_pos, n);
+    usb_last_activity = k_now_ms();
     tx_pos += n;
     port_usb_csr0 = TXCSR_TXPKTRDY;
 }

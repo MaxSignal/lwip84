@@ -69,6 +69,8 @@ void usb_fifo_in(uint8_t *buf, uint16_t count_port);
 
 /* events latched by the interrupt handler (reading 82h/84h/86h clears them) */
 extern volatile uint8_t usb_ev_tx, usb_ev_rx, usb_ev_bus, usb_ev_line;
+extern volatile uint8_t usb_irq_masked;
+extern uint32_t usb_last_activity;  /* k_now_ms() of the last packet moved */
 void usb_isr(void);
 
 /* device state */

@@ -2,7 +2,7 @@
  *
  * Keys:  Y= status        WINDOW ping gateway    ZOOM DNS lookup
  *        TRACE HTTP GET   GRAPH TCP echo (gateway:8084)
- *        MODE SNTP sync   STAT show time
+ *        MODE SNTP sync   STAT show time   VARS download test (gateway:8085)
  *        CLEAR clear      2nd+ON power off
  */
 #include <string.h>
@@ -95,7 +95,8 @@ static const char *gateway_str(void)
 
 void main(void)
 {
-    uint8_t k, shift = 0;
+    uint8_t k, shift = 0, ui_div = 0;
+    uint32_t now, next_ui = 0;
     port_int_id = 0x00;                 /* map mode 0, timer 1 at 512 Hz */
     port_int_mask = INT_ON | INT_TIMER1 | INT_POWER;
     __asm__("ei");
@@ -117,14 +118,23 @@ void main(void)
         lwip_service_events();
         demo_poll();
         app_poll();
-        status_line();
+        now = k_now_ms();
+        if ((int32_t)(now - next_ui) >= 0) {
+            next_ui = now + 20;
+            k = kbd_get();
+            if (++ui_div >= 12) {       /* status line every ~250 ms */
+                ui_div = 0;
+                status_line();
+            }
+        } else {
+            k = K_NONE;
+        }
         if (k_on_pressed) {
             k_on_pressed = 0;
             if (shift)
                 k_power_off();
             shift = 0;
         }
-        k = kbd_get();
         switch (k) {
         case K_2ND:
             shift ^= 1;
@@ -145,6 +155,9 @@ void main(void)
         case K_GRAPH:
             app_tcp_echo(gateway_str(), 8084);
             break;
+        case K_VARS:
+            app_download(gateway_str(), 8085);
+            break;
         case K_MODE:
             app_sntp();
             break;
@@ -158,7 +171,9 @@ void main(void)
         if (k != K_NONE && k != K_2ND)
             shift = 0;
         con_flush();
-        if (!k)
-            __asm__("halt");            /* wait for the next tick or USB event */
+        /* sleep until the next tick or USB interrupt, but keep polling while
+         * USB traffic is flowing (the FIFOs are single-buffered) */
+        if (!k && (uint32_t)(k_now_ms() - usb_last_activity) > 50)
+            __asm__("halt");
     }
 }

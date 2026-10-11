@@ -26,7 +26,7 @@ static void app_event(struct lwip_socket *sock, lwip_socket_event_type_t type,
     if (type == LWIP_SOCKET_EV_STATE_CHANGE) {
         const lwip_socket_state_data_t *st = ev_data;
         con_printf("[%s]\n", status_names[st->current]);
-        if (st->current == LWIP_STATUS_CONNECTED) {
+        if (st->current == LWIP_STATUS_CONNECTED && app_req[0]) {
             lwip_error_t e = lwip_socket_write(sock, (const uint8_t *)app_req,
                                                strlen(app_req));
             if (e != LWIP_OK)
@@ -72,6 +72,12 @@ void app_http_get(const char *host)
     app_start(LWIP_SOCKET_TCP, host, 80, 3);
 }
 
+void app_download(const char *host, uint16_t port)
+{
+    app_req[0] = 0;
+    app_start(LWIP_SOCKET_TCP, host, port, 0);
+}
+
 void app_tcp_echo(const char *host, uint16_t port)
 {
     strcpy(app_req, "hello from a TI-84 Plus\n");
@@ -111,7 +117,10 @@ void app_poll(void)
         app_consume(buf, n);
     }
     if (!lwip_socket_is_active(app_sock)) {
-        con_printf("done: %u bytes, %lu ms\n", app_rx_total, k_now_ms() - app_started);
+        uint32_t ms = k_now_ms() - app_started;
+        con_printf("done: %u bytes, %lu ms\n", app_rx_total, ms);
+        if (ms)
+            con_printf("%lu bytes/s\n", (uint32_t)app_rx_total * 1000u / ms);
         lwip_socket_destroy(app_sock);
         app_sock = NULL;
     }

@@ -33,6 +33,9 @@ struct ti84 {
     uint32_t rtc_base;
     uint8_t exec_lo, exec_hi;           /* ports 22h/23h */
     int debug_out, warned_flash_write, halt_warned, fault;
+    int profiling;
+    uint32_t *prof;                     /* samples per (bank << 16 | pc) */
+    uint64_t prof_cycles, halt_cycles;
     char log[65536];
     size_t log_len;
 };
