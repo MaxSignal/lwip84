@@ -892,7 +892,12 @@ void browser_poll(void)
         if (hstate == H_DONE)
             break;
     }
-    if (hstate == H_DONE || !lwip_socket_is_active(sock)) {
+    if (nlines >= MAX_LINES && hstate != H_DONE) {
+        stop();                         /* the text buffer is full */
+        strcpy(msg, "page truncated");
+        draw();
+        return;
+    } else if (hstate == H_DONE || !lwip_socket_is_active(sock)) {
         stop();
         if (do_redirect) {
             do_redirect = 0;
@@ -905,8 +910,10 @@ void browser_poll(void)
             strcpy(msg, msg[0] && memcmp(msg, "error", 5) == 0 ? msg : "no response");
         else
             msg[0] = 0;
-        last_draw = k_now_ms() - 1000;  /* show the result now */
         dbg_printf("web: %lu bytes, %u lines, %lu ms\n", rx_bytes, nlines, k_now_ms() - t_start);
+        if (!editing)
+            draw();                     /* show the result now */
+        return;
     }
     if (!editing && (uint32_t)(k_now_ms() - last_draw) > 1000) {
         last_draw = k_now_ms();
