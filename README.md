@@ -146,6 +146,20 @@ Commands: `run MS`, `waitlog TEXT MS`, `key NAME [MS]`, `down`/`up NAME`,
 
 ## Installing on a calculator
 
+From Linux, without TiLP (libticalcs is unpacked locally by
+`tools/build-ti84link.sh`, no root needed):
+
+```
+sudo tools/host-setup.sh        # once: udev rules + NetworkManager profile "ti84-usb"
+tools/flash-calc.sh --debug     # versions, backup + ROM dump, send the OS, wait for the network
+```
+
+`flash-calc.sh` stores the backup (all variables and apps, `calc-info.txt`
+and a ROM dump) in `../../backup/DATE/` and stops if the boot code is 1.03 or
+newer. `ti84link check FILE.8xu` parses an upgrade file like TiLP does.
+
+Manually:
+
 1. Back up your files: TI-OS and the calculator's RAM are replaced.
 2. Send `build-84p/lwip84.8xu` (or `build-84pse/` for the Silver Edition) as an
    OS upgrade with TiLP or TI Connect. Boot code 1.02 and older accept the
