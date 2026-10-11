@@ -204,6 +204,11 @@ void con_scroll(int8_t d)
     }
 }
 
+void con_refresh(void)
+{
+    con_dirty = 1;
+}
+
 void con_flush(void)
 {
     if (!con_dirty)

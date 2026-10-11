@@ -7,6 +7,10 @@ volatile uint32_t k_ticks;
 static volatile uint32_t k_ms;          /* milliseconds, advanced by 125/64 per tick */
 static uint8_t k_ms_frac;
 volatile uint8_t k_on_pressed;
+/* The ON interrupt is level-triggered: it fires again and again for as long
+ * as the key is held.  After a press it stays disabled until the timer
+ * interrupt sees the key released. */
+volatile uint8_t k_on_masked;
 volatile uint8_t usb_ev_tx, usb_ev_rx, usb_ev_bus, usb_ev_line;
 
 volatile uint8_t usb_irq_masked;
@@ -39,18 +43,21 @@ static void usb_irq(void)
 void isr(void)
 {
     uint8_t id = port_int_id;
+    if (id & INT_ON) {
+        k_on_pressed = 1;
+        k_on_masked = 1;
+        port_int_mask = INT_TIMER1 | INT_POWER;          /* acknowledge, disable */
+    }
     if (id & INT_TIMER1) {
         k_ticks++;
         k_ms_frac += 125;               /* 512 Hz: 1.953125 ms per tick */
         k_ms += k_ms_frac >> 6;
         k_ms_frac &= 63;
-        port_int_mask = INT_ON | INT_POWER;              /* acknowledge */
-        port_int_mask = INT_ON | INT_TIMER1 | INT_POWER;
-    }
-    if (id & INT_ON) {
-        k_on_pressed = 1;
-        port_int_mask = INT_TIMER1 | INT_POWER;
-        port_int_mask = INT_ON | INT_TIMER1 | INT_POWER;
+        if (k_on_masked && (id & 0x08)) /* bit 3 set: ON released */
+            k_on_masked = 0;
+        port_int_mask = INT_POWER;                       /* acknowledge */
+        port_int_mask = k_on_masked ? INT_TIMER1 | INT_POWER
+                                    : INT_ON | INT_TIMER1 | INT_POWER;
     }
     if ((port_usb_int & 0x14) != 0x14)
         usb_irq();

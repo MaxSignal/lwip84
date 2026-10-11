@@ -25,7 +25,7 @@ struct ti84 {
     uint8_t bank_a, bank_b, ram_c000;
     int mem_mode, cpu_speed, flash_unlocked;
     uint8_t int_mask, int_status, timer_speed;
-    int int_line, on_down;
+    int int_line, on_down, low_power;
     uint8_t key_groups, keys[8];
     struct crystal crys[3];
     struct lcd lcd;

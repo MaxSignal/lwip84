@@ -125,6 +125,10 @@ static void mem_write(uint16_t addr, uint8_t v)
 
 static void update_int(void)
 {
+    /* the ON interrupt is level-triggered: it is raised again as long as the
+     * key is held and the interrupt is enabled */
+    if (ti.on_down && (ti.int_mask & 1))
+        ti.int_status |= 1;
     int pending = (ti.int_status & 0x07) || (ti.int_status & 0xE0);
     if (usb_irq_pending())
         pending = 1;
@@ -429,6 +433,7 @@ static void port_out(uint8_t p, uint8_t v)
     case 0x03:
         ti.int_mask = v;
         ti.int_status &= (v & 0x17) | 0xE0;
+        update_int();
         break;
     case 0x04:
         ti.mem_mode = v & 1;
@@ -535,6 +540,16 @@ static void run_ps(uint64_t dur)
         ti.now_ps += ps_per_tick();
         if (ti.now_ps >= ti.next_event)
             run_events();
+        /* halt with port 03h bit 3 clear: low-power mode (calculator off) */
+        if ((pins & Z80_HALT) && !(ti.int_mask & 0x08)) {
+            if (!ti.low_power) {
+                ti.low_power = 1;
+                fprintf(stderr, "emu84: low-power halt (lcd %s)\n", ti.lcd.on ? "on" : "off");
+            }
+        } else if (ti.low_power && !(pins & Z80_HALT)) {
+            ti.low_power = 0;
+            fprintf(stderr, "emu84: woke from low power\n");
+        }
         if ((pins & Z80_HALT) && !ti.cpu.iff1 && !ti.int_line && !ti.halt_warned) {
             /* di; halt: nothing will ever wake the CPU (except ON) */
             ti.halt_warned = 1;

@@ -27,6 +27,7 @@ void con_putc(char c);
 void con_puts(const char *s);
 void con_printf(const char *fmt, ...);
 void con_flush(void);            /* push console changes to the LCD */
+void con_refresh(void);          /* redraw everything on the next con_flush */
 void con_status(const char *s);  /* inverted status line at the top */
 void con_scroll(int8_t d);       /* scroll back (d > 0) or forward */
 
@@ -56,7 +57,7 @@ void k_detect_platform(void);
 void far_read(uint8_t page, uint16_t addr, void *dst, uint16_t len);
 
 /* power */
-extern volatile uint8_t k_on_pressed;
+extern volatile uint8_t k_on_pressed, k_on_masked;
 void k_power_off(void);
 
 #endif
