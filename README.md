@@ -5,8 +5,7 @@ TI-84 Plus Silver Edition** (Z80 at 15 MHz, 128 KiB RAM) with the
 [lwIP](https://savannah.nongnu.org/projects/lwip/) TCP/IP stack, a USB
 network interface, a TLS 1.3 client, a text web browser and an SSH client.
 
-![Wikipedia's Zilog Z80 article: infobox](docs/wikipedia-z80-infobox.png)
-![Wikipedia's Zilog Z80 article: text](docs/wikipedia-z80-text.png)
+![Wikipedia's Zilog Z80 article on the calculator](docs/wikipedia-z80-text.png)
 
 - Only the early hardware revisions with **128 KiB of RAM** are supported,
   not the later ones with 48 KiB.
