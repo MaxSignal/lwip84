@@ -48,6 +48,9 @@ for half in (0, 1):
     vals = [((38 * x) >> (8 * half)) & 0xFF for x in range(256)]
     for k in range(0, 256, 16):
         w('\t.db ' + ', '.join('0x%02X' % v for v in vals[k:k + 16]))
+# 4200h: more page-aligned tables of other generators (the AES S-box)
+if len(sys.argv) > 2:
+    out.extend(open(sys.argv[2]).read().splitlines())
 
 # --- add33: (HL) += (DE), 33 bytes, HL/DE advance, carry out in CF
 w('fm_add33::')

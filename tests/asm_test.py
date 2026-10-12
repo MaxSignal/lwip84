@@ -13,9 +13,9 @@ RUN = os.environ.get('Z80RUN', os.path.abspath(os.path.join(TI84P, '../../tmp/z8
 TMP = os.environ.get('TMPDIR', os.path.abspath(os.path.join(TI84P, '../../tmp')))
 
 
-def build(gen, stub):
+def build(gen, stub, args=()):
     d = tempfile.mkdtemp(dir=TMP)
-    subprocess.check_call([sys.executable, os.path.join(TI84P, 'tools', gen), d + '/mod.s'])
+    subprocess.check_call([sys.executable, os.path.join(TI84P, 'tools', gen), d + '/mod.s'] + list(args))
     open(d + '/stub.s', 'w').write(stub)
     for m in ('stub', 'mod'):
         subprocess.check_call([SDCC + '/sdasz80', '-plosgff', d + '/%s.rel' % m, d + '/%s.s' % m])
@@ -154,7 +154,122 @@ def test_poly1305(n):
     return 0
 
 
+AES_STUB = """\t.module stub
+\t.globl _aes_rk, _aes_in, _aes_out, _aes_xor, _aes_encrypt_core
+\t.area _CODE
+start::
+\tld hl, #0xE000
+\tld (_aes_rk), hl
+\tld hl, #0xE100
+\tld (_aes_in), hl
+\tld hl, #0xE200
+\tld (_aes_out), hl
+\tld a, (0xE300)
+\tld (_aes_xor), a
+\tcall _aes_encrypt_core
+\thalt
+"""
+
+
+def aes_ref(key, blk):
+    """AES-128 encryption of one block (FIPS 197), plain Python"""
+    sys.path.insert(0, os.path.join(TI84P, 'tools'))
+    from gen_aes_z80 import sbox
+    sb = sbox()
+    xt = lambda x: ((x << 1) ^ 0x11B) if x & 0x80 else x << 1
+    rk = list(key)
+    rcon = 1
+    for i in range(16, 176, 4):
+        t = rk[i - 4:i]
+        if i % 16 == 0:
+            t = [sb[t[1]] ^ rcon, sb[t[2]], sb[t[3]], sb[t[0]]]
+            rcon = xt(rcon)
+        rk += [rk[i - 16 + j] ^ t[j] for j in range(4)]
+    s = [b ^ k for b, k in zip(blk, rk[:16])]
+    for r in range(1, 11):
+        t = [sb[s[i % 4 + 4 * ((i // 4 + i % 4) % 4)]] for i in range(16)]
+        if r < 10:
+            s = []
+            for c in range(4):
+                a = t[4 * c:4 * c + 4]
+                x = a[0] ^ a[1] ^ a[2] ^ a[3]
+                s += [a[i] ^ x ^ xt(a[i] ^ a[(i + 1) % 4]) for i in range(4)]
+        else:
+            s = t
+        s = [b ^ k for b, k in zip(s, rk[16 * r:16 * r + 16])]
+    return bytes(s), bytes(rk)
+
+
+def test_aes(n):
+    sys.path.insert(0, os.path.join(TI84P, 'tools'))
+    from gen_aes_z80 import sbox
+    d, start = build('gen_aes_z80.py', AES_STUB, ['0xD000'])
+    rnd = random.Random(3)
+    # FIPS 197 appendix C.1
+    vectors = [(bytes(range(16)), bytes.fromhex('00112233445566778899aabbccddeeff'))]
+    vectors += [(bytes(rnd.getrandbits(8) for _ in range(16)), bytes(rnd.getrandbits(8) for _ in range(16)))
+                for _ in range(n)]
+    for k, (key, blk) in enumerate(vectors):
+        want, rk = aes_ref(key, blk)
+        if k == 0 and want.hex() != '69c4e0d86a7b0430d8cdb78070b4c55a':
+            print('aes reference FAIL')
+            return 1
+        xor = k % 2
+        old = bytes(rnd.getrandbits(8) for _ in range(16))
+        got, t = run(d, start, [(0xD000, bytes(sbox())), (0xE000, rk), (0xE100, blk),
+                                (0xE200, old), (0xE300, bytes([xor]))], (0xE200, 16))
+        exp = bytes(a ^ b for a, b in zip(want, old)) if xor else want
+        if got != exp:
+            print('aes FAIL', k, got.hex(), exp.hex())
+            return 1
+    print('aes ok, %d blocks, %d T-states per block (%.1f KB/s at 15 MHz)'
+          % (len(vectors), t, 16 / (t / 15e6) / 1024))
+    return 0
+
+
+GH_STUB = """\t.module stub
+\t.globl _gh_x, _gh_m, _ghash_mul_core
+\t.area _CODE
+start::
+\tld hl, #0xE000
+\tld (_gh_x), hl
+\tld hl, #0xE100
+\tld (_gh_m), hl
+\tcall _ghash_mul_core
+\thalt
+"""
+
+
+def gf_mul(x, y):
+    """GF(2^128) product of SP 800-38D (bit 0 is the most significant)"""
+    R = 0xE1 << 120
+    z, v = 0, y
+    for i in range(127, -1, -1):
+        if (x >> i) & 1:
+            z ^= v
+        v = (v >> 1) ^ R if v & 1 else v >> 1
+    return z
+
+
+def test_ghash(n):
+    d, start = build('gen_aes_z80.py', GH_STUB, ['0xD000'])
+    rnd = random.Random(4)
+    for k in range(n):
+        h = rnd.getrandbits(128)
+        x = rnd.getrandbits(128) if k else 0
+        # m[i] = i * H with the nibble bits as x^0..x^3 of the 4-bit polynomial
+        m = b''.join(gf_mul(i << 124, h).to_bytes(16, 'big') for i in range(16))
+        got, t = run(d, start, [(0xE000, x.to_bytes(16, 'big')), (0xE100, m)], (0xE000, 16))
+        want = gf_mul(x, h).to_bytes(16, 'big')
+        if got != want:
+            print('ghash FAIL', k, got.hex(), want.hex())
+            return 1
+    print('ghash ok, %d products, %d T-states per block (%.1f KB/s at 15 MHz)'
+          % (n, t, 16 / (t / 15e6) / 1024))
+    return 0
+
+
 if __name__ == '__main__':
     what = sys.argv[1]
     n = int(sys.argv[2]) if len(sys.argv) > 2 else 20
-    sys.exit({'sha256': test_sha256, 'poly1305': test_poly1305}[what](n))
+    sys.exit({'sha256': test_sha256, 'poly1305': test_poly1305, 'aes': test_aes, 'ghash': test_ghash}[what](n))

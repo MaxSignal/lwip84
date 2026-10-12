@@ -8,6 +8,7 @@
 #include "lwip/sntp_time.h"
 #include "x25519.h"
 #include "chacha.h"
+#include "aes.h"
 #include "sha256.h"
 
 static struct lwip_socket *app_sock;
@@ -204,6 +205,37 @@ void app_selftest(void)
             for (k = 0; k < 64; k++)
                 chacha_block(blk, buf);
             con_printf("chacha 4KB %lu ms\n", k_now_ms() - t);
+            {
+                /* the two TLS ciphers as used for received records */
+                chacha_ctx *cc = malloc(sizeof(*cc));
+                aes_ctr_ctx *ac = malloc(sizeof(*ac));
+                if (cc && ac) {
+                    t = k_now_ms();
+                    chacha_init(cc, buf, buf, 12, 1);
+                    for (k = 0; k < 4; k++)
+                        chacha_xor(cc, buf, 1024);
+                    con_printf("chacha20 dec 4KB %lu ms\n", k_now_ms() - t);
+                    ac->ready = 0;
+                    t = k_now_ms();
+                    aes_ctr_init(ac, buf, buf, 2);
+                    for (k = 0; k < 4; k++)
+                        aes_ctr_xor(ac, buf, 1024);
+                    con_printf("aes128 dec 4KB %lu ms\n", k_now_ms() - t);
+                    t = k_now_ms();
+                    aes_gcm_seal(buf, buf, buf, 5, buf + 16, 1000, out);
+                    con_printf("aes-gcm seal 1KB %lu ms\n", k_now_ms() - t);
+                    /* FIPS 197 C.1 */
+                    for (k = 0; k < 16; k++) {
+                        buf[k] = (uint8_t)k;
+                        buf[16 + k] = (uint8_t)(k * 0x11);
+                    }
+                    aes128_expand(ac->rk, buf);
+                    aes128_encrypt(ac->rk, buf + 16, out);
+                    con_printf("aes %s\n", out[0] == 0x69 && out[1] == 0xc4 && out[15] == 0x5a ? "ok" : "FAIL");
+                }
+                free(cc);
+                free(ac);
+            }
             t = k_now_ms();
             sha256_init(&sc);
             for (k = 0; k < 4; k++)

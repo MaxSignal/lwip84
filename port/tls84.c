@@ -3,12 +3,14 @@
  * entry points, so lwip_socket_create(LWIP_SOCKET_TLS / _WSS) works.
  *
  * Only what is needed to talk to a server is done:
- *   - one cipher suite, TLS_CHACHA20_POLY1305_SHA256, and one group, X25519
+ *   - two cipher suites, TLS_AES_128_GCM_SHA256 (offered alone: AES is
+ *     1.7 times as fast as ChaCha20 on the Z80) and
+ *     TLS_CHACHA20_POLY1305_SHA256 as a fallback, and one group, X25519
  *   - no certificate, CertificateVerify or Finished checks: the server's
  *     encrypted handshake is only hashed into the transcript.  The
  *     connection is encrypted but NOT authenticated (no protection against
  *     an active man in the middle).
- *   - incoming records are decrypted as a stream and their Poly1305 tags are
+ *   - incoming records are decrypted as a stream and their tags are
  *     skipped, so 16 KiB records need no 16 KiB buffer; outgoing records
  *     are sealed properly (the server checks them)
  *   - no HelloRetryRequest, resumption, early data or KeyUpdate
@@ -30,14 +32,24 @@
 #include "kernel.h"
 #include "sha256.h"
 #include "chacha.h"
+#include "aes.h"
 #include "x25519.h"
 #include "rng.h"
 #include "kx84.h"
 #include "tls84.h"
 
 #define ACC_MAX 1024            /* records up to this size are buffered whole */
-#define CHUNK 128               /* ciphertext processed per step */
+#define CHUNK 256               /* ciphertext processed per step (in place) */
 #define OVERHEAD 22             /* record header + inner type + tag */
+
+/* Offer only TLS_AES_128_GCM_SHA256, which every TLS 1.3 server must
+ * implement (RFC 8446 9.1): servers that prefer ChaCha20 would choose it
+ * if both were offered.  A host that refuses the handshake gets
+ * TLS_CHACHA20_POLY1305_SHA256 (and AES) on the next attempt. */
+#ifndef TLS_PREFER_AES
+#define TLS_PREFER_AES 1
+#endif
+static char chacha_host[DNS_MAX_NAME_LENGTH + 1];
 
 enum { P_WAIT_KEY, P_WAIT_SH, P_KEX, P_HS, P_APP, P_CLOSED, P_FAIL };
 enum { R_HDR, R_SKIP, R_PLAIN, R_BODY, R_TAG };
@@ -48,7 +60,12 @@ struct tls84 {
     uint8_t phase, rstate, buffered, stream_type, s_switch, eof, tcp_up;
     uint8_t hdr[5], hdr_n, tag_left;
     uint16_t body_left;
-    chacha_ctx dec;
+    uint8_t aes;                /* cipher suite: 1 AES-128-GCM, 0 ChaCha20-Poly1305 */
+    uint8_t aes_only;           /* only AES was offered */
+    union {
+        chacha_ctx cc;
+        aes_ctr_ctx aes;
+    } dec;
     uint8_t *acc;
     uint16_t acc_n, zeros;
     uint8_t pend, pend_ok;
@@ -132,9 +149,10 @@ static void mknonce(uint8_t n[12], const uint8_t iv[12], uint32_t seq)
     n[11] ^= (uint8_t)seq;
 }
 
-static void traffic_keys(const uint8_t secret[32], uint8_t key[32], uint8_t iv[12])
+static void traffic_keys(struct tls84 *st, const uint8_t secret[32], uint8_t key[32],
+                         uint8_t iv[12])
 {
-    hkdf_expand_label(secret, "key", NULL, 0, key, 32);
+    hkdf_expand_label(secret, "key", NULL, 0, key, st->aes ? 16 : 32);
     hkdf_expand_label(secret, "iv", NULL, 0, iv, 12);
 }
 
@@ -179,6 +197,13 @@ static err_t send_record(struct tls84 *st, uint8_t type, const void *data, uint1
     memcpy(rec + 5, data, len);
     rec[5 + len] = type;
     mknonce(nonce, st->c_iv, st->c_seq);
+    if (st->aes) {
+        if (!aes_gcm_seal(st->c_key, nonce, rec, 5, rec + 5, ct, rec + 5 + ct)) {
+            free(rec);
+            return ERR_MEM;
+        }
+        goto sealed;
+    }
     chacha_init(&cc, st->c_key, nonce, 12, 0);
     chacha_block(cc.s, cc.ks);          /* block 0: the Poly1305 key */
     poly1305_init(&pc, cc.ks);
@@ -194,6 +219,7 @@ static err_t send_record(struct tls84 *st, uint8_t type, const void *data, uint1
     lens[9] = (uint8_t)(ct >> 8);
     poly1305_update(&pc, lens, 16);
     poly1305_final(&pc, rec + 5 + ct);
+sealed:
     e = altcp_write(st->conn->inner_conn, rec, ct + OVERHEAD - 1, TCP_WRITE_FLAG_COPY);
     free(rec);
     if (e == ERR_OK) {
@@ -235,7 +261,8 @@ static void send_client_hello(struct tls84 *st)
     uint16_t pk_data = psk ? 2 + 2 + tcache.tlen + 4 + 2 + 1 + 32 : 0;
     uint16_t psk_len = psk ? 6 + 4 + pk_data : 0;   /* + psk_key_exchange_modes */
     uint16_t ext = sizeof(fixed_ext_bk) + 32 + (hl ? 9 + hl : 0) + psk_len;
-    uint16_t body = 2 + 32 + 33 + 4 + 2 + 2 + ext;
+    uint8_t aes_only = TLS_PREFER_AES && strcmp(chacha_host, st->host);
+    uint16_t body = 2 + 32 + 33 + (aes_only ? 4 : 6) + 2 + 2 + ext;
     uint8_t *m = malloc(9 + body), *p;
     if (!m) {
         fail(st, "no memory");
@@ -252,8 +279,15 @@ static void send_client_hello(struct tls84 *st)
     *p++ = 32;                          /* legacy session id (middlebox compatibility) */
     rng_bytes(p, 32);
     p += 32;
-    p = put16(p, 2);
-    p = put16(p, 0x1303);               /* TLS_CHACHA20_POLY1305_SHA256 */
+    st->aes_only = aes_only;
+    if (aes_only) {
+        p = put16(p, 2);
+        p = put16(p, 0x1301);           /* TLS_AES_128_GCM_SHA256 */
+    } else {
+        p = put16(p, 4);
+        p = put16(p, 0x1303);           /* TLS_CHACHA20_POLY1305_SHA256 */
+        p = put16(p, 0x1301);
+    }
     *p++ = 1; *p++ = 0;                 /* null compression */
     p = put16(p, ext);
     if (hl) {
@@ -343,7 +377,7 @@ static void server_finished(struct tls84 *st)
     memcpy(&t, &st->th, sizeof(t));
     sha256_final(&t, th);
     hkdf_expand_label(st->secret, "s ap traffic", th, 32, sec, 32);
-    traffic_keys(sec, st->s_key, st->s_iv);
+    traffic_keys(st, sec, st->s_key, st->s_iv);
     st->s_switch = 1;                   /* sequence 0 from the next record on */
     send_raw(st, ccs, sizeof(ccs));
     if (st->cert_req) {                 /* empty client Certificate */
@@ -364,7 +398,7 @@ static void server_finished(struct tls84 *st)
     }
     altcp_output(st->conn->inner_conn);
     hkdf_expand_label(st->secret, "c ap traffic", th, 32, sec, 32);
-    traffic_keys(sec, st->c_key, st->c_iv);
+    traffic_keys(st, sec, st->c_key, st->c_iv);
     st->c_seq = 0;
     /* resumption master secret: Hash(ClientHello .. client Finished) */
     sha256_update(&st->th, fin, 36);
@@ -522,10 +556,12 @@ static void server_hello(struct tls84 *st)
     pos = 4 + 2 + 32;
     pos += 1 + p[pos];                  /* session id */
     end = (uint16_t)blen + 4;
-    if (pos + 5 > end || p[pos] != 0x13 || p[pos + 1] != 0x03) {
-        fail(st, "server does not do ChaCha20");
+    if (pos + 5 > end || p[pos] != 0x13 || (p[pos + 1] != 0x01 && p[pos + 1] != 0x03)) {
+        fail(st, "server does not do AES-GCM or ChaCha20");
         return;
     }
+    st->aes = p[pos + 1] == 0x01;
+    st->dec.aes.ready = 0;
     pos += 3 + 2;                       /* suite, compression, extensions length */
     while (pos + 4 <= end) {
         uint16_t type = (uint16_t)p[pos] << 8 | p[pos + 1];
@@ -549,7 +585,8 @@ static void server_hello(struct tls84 *st)
         memcpy(st->derived, derived_early, 32);
         ticket_drop();
     }
-    dbg_printf("tls: %s handshake\n", st->psk_used ? "resumed" : "full");
+    dbg_printf("tls: %s handshake, %s\n", st->psk_used ? "resumed" : "full",
+               st->aes ? "AES-128-GCM" : "ChaCha20-Poly1305");
     sha256_update(&st->th, p, end);
     memcpy(&t, &st->th, sizeof(t));
     sha256_final(&t, st->c_hs);
@@ -572,8 +609,8 @@ static void kex_done(struct tls84 *st)
     hkdf_extract(st->derived, shared, hs);
     hkdf_expand_label(hs, "s hs traffic", st->c_hs, 32, s_hs, 32);
     hkdf_expand_label(hs, "c hs traffic", st->c_hs, 32, st->c_hs, 32);
-    traffic_keys(s_hs, st->s_key, st->s_iv);
-    traffic_keys(st->c_hs, st->c_key, st->c_iv);
+    traffic_keys(st, s_hs, st->s_key, st->s_iv);
+    traffic_keys(st, st->c_hs, st->c_key, st->c_iv);
     st->s_seq = st->c_seq = 0;
     hkdf_expand_label(hs, "derived", empty_hash, 32, s_hs, 32);
     hkdf_extract(s_hs, zeros32, st->secret);
@@ -611,16 +648,21 @@ static void rec_start(struct tls84 *st)
     } else if (st->phase == P_WAIT_SH) {
         if (type == 22 && len <= ACC_MAX && want_acc(st))
             st->rstate = R_PLAIN;
-        else if (type == 21)
+        else if (type == 21) {
+            if (st->aes_only)
+                strcpy(chacha_host, st->host);  /* try ChaCha20 next time */
             fail(st, "handshake refused (alert)");
-        else {
+        } else {
             dbg_printf("tls: record type %u len %u before ServerHello\n", type, len);
             fail(st, "unexpected record");
         }
     } else if (type == 23 && len > 16) {
         uint8_t nonce[12];
         mknonce(nonce, st->s_iv, st->s_seq);
-        chacha_init(&st->dec, st->s_key, nonce, 12, 1);
+        if (st->aes)
+            aes_ctr_init(&st->dec.aes, st->s_key, nonce, 2);
+        else
+            chacha_init(&st->dec.cc, st->s_key, nonce, 12, 1);
         st->body_left = len - 16;
         st->buffered = st->body_left <= ACC_MAX;
         if (st->buffered && !want_acc(st))
@@ -681,7 +723,10 @@ static uint16_t rec_feed(struct tls84 *st, uint8_t *b, uint16_t n)
             st->acc_n += k;
             break;
         case R_BODY:
-            chacha_xor(&st->dec, p, k);
+            if (st->aes)
+                aes_ctr_xor(&st->dec.aes, p, k);
+            else
+                chacha_xor(&st->dec.cc, p, k);
             if (st->buffered) {
                 memcpy(st->acc + st->acc_n, p, k);
                 st->acc_n += k;
@@ -721,7 +766,6 @@ static uint16_t rec_feed(struct tls84 *st, uint8_t *b, uint16_t n)
 static bool tls_process(struct tls84 *st)
 {
     struct altcp_pcb *conn = st->conn;
-    uint8_t buf[CHUNK];
     while (st->rx && st->phase < P_CLOSED && st->phase != P_KEX &&
            (!st->app || st->app->tot_len < 2048)) {
         struct pbuf *q = st->rx;
@@ -734,8 +778,8 @@ static bool tls_process(struct tls84 *st)
             pbuf_free(q);
             continue;
         }
-        memcpy(buf, q->payload, n);
-        used = rec_feed(st, buf, n);
+        /* decrypted in place: the received data belongs to us now */
+        used = rec_feed(st, q->payload, n);
         st->rx = pbuf_free_header(q, used);
         st->to_ack += used;
         if (used < n)

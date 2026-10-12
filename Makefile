@@ -55,7 +55,7 @@ COMMON_S = os/crt0.s os/farcall.s os/usb_ll.s
 BANKED_C = os/main.c os/demo.c os/apps.c os/input.c os/ui.c os/browser.c os/html.c os/ssh.c os/term.c os/lcd.c os/fmt.c os/usb_ctl.c os/ncm.c os/heap.c \
            port/sys_arch.c port/sntp_time.c port/bytes.c port/imports.c port/netif_ncm.c \
            port/usb_ethernet84.c port/tls84.c port/kx84.c port/lwip_start84.c \
-           crypto/sha256.c crypto/chacha.c crypto/x25519.c crypto/rng.c \
+           crypto/sha256.c crypto/chacha.c crypto/aes.c crypto/x25519.c crypto/rng.c \
            $(LWIP_C)
 
 # lwIP-CE sources shared with the TI-84 Plus CE build
@@ -92,12 +92,13 @@ $(B)/asm/%.asm: %.s
 	cp $< $@
 
 FIXED_ASM = $(B)/asm/crypto/fe_z80.asm
-$(FIXED_ASM): tools/gen_fe_z80.py tools/gen_sha256_z80.py tools/gen_poly1305_z80.py
+$(FIXED_ASM): tools/gen_fe_z80.py tools/gen_sha256_z80.py tools/gen_poly1305_z80.py tools/gen_aes_z80.py
 	@mkdir -p $(dir $@)
-	$(PY) tools/gen_fe_z80.py $@.fe
+	$(PY) tools/gen_aes_z80.py $@.aes 0x4200 $@.sbox
+	$(PY) tools/gen_fe_z80.py $@.fe $@.sbox
 	$(PY) tools/gen_sha256_z80.py $@.sha
 	$(PY) tools/gen_poly1305_z80.py $@.p13
-	cat $@.fe $@.sha $@.p13 > $@
+	cat $@.fe $@.sha $@.p13 $@.aes > $@
 
 $(B)/banked.stamp: $(COMMON_ASM) $(BANKED_ASM) $(FIXED_ASM) tools/banker.py
 	rm -rf $(B)/bk && mkdir -p $(B)/bk
