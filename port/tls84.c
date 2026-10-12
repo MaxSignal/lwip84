@@ -410,7 +410,8 @@ static void server_finished(struct tls84 *st)
     memzero(st->c_hs, 32);
     memzero(sec, 32);
     st->phase = P_APP;
-    dbg_printf("tls: handshake done after %lu ms\n", k_now_ms() - st->t_hello);
+    dbg_printf("tls: handshake done after %lu ms, heap %u free (largest %u)\n",
+               k_now_ms() - st->t_hello, heap_free_bytes(), heap_largest_block());
     if (st->conn->connected)
         st->conn->connected(st->conn->arg, st->conn, ERR_OK);
 }

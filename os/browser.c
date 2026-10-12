@@ -871,8 +871,8 @@ void browser_poll(void)
             strcpy(msg, msg[0] && memcmp(msg, "error", 5) == 0 ? msg : "no response");
         else
             msg[0] = 0;
-        dbg_printf("web: %lu bytes, %u lines, %u items, %lu ms\n", rx_bytes, html_lines,
-                   html_items, k_now_ms() - t_start);
+        dbg_printf("web: %lu bytes, %u lines, %u items, %lu ms, heap %u free\n", rx_bytes,
+                   html_lines, html_items, k_now_ms() - t_start, heap_free_bytes());
         if (!editing)
             draw();                     /* show the result now */
         return;
