@@ -1,12 +1,14 @@
 /* browser.c - a text web browser (HTTP/1.0 and HTTPS through lwIP.h).
  *
- * The page is rendered while it arrives: tags are dropped, block elements
- * start new lines, text is word-wrapped to 24 columns and stored line by
- * line in extended RAM, links are numbered "[n]" and their targets stored
- * there too.  RAM use is a few hundred bytes plus the socket.
+ * The page is rendered by os/html.c while it arrives.  Links and form
+ * fields carry inverted numbers; typing a number and ENTER follows the
+ * link or uses the field (edit text, toggle a check box, choose from a
+ * list, submit).  Forms are sent with GET or POST.  Text typed into the
+ * URL line that is not an address is searched with DuckDuckGo Lite, which
+ * works without JavaScript.
  *
- * Keys:  Y=  enter a URL             0-9  follow link n (ENTER)
- *        UP/DOWN  scroll   LEFT/RIGHT  page up/down
+ * Keys:  Y=  URL or search words     0-9 ENTER  use item n
+ *        UP/DOWN  scroll   LEFT/RIGHT  page up/down   GRAPH  top/content
  *        DEL  back       ENTER  reload    CLEAR  stop
  *        MODE  quit      ALPHA/2nd  letters and symbols while typing
  */
@@ -15,30 +17,28 @@
 #include "kernel.h"
 #include "input.h"
 #include "ui.h"
+#include "html.h"
 #include "lwIP.h"
 #include "tls84.h"
 
-#define URL_MAX 159
+#define URL_MAX HTML_STR_MAX
 #define COLS CON_COLS
 #define ROWS 9
-#define X_TEXT (XRAM_BROWSER)
-#define MAX_LINES 2048u                 /* 48 KiB of text */
-#define X_LINKS (XRAM_BROWSER + 0xC000UL)
-#define LINKS_SIZE 0x3000u
-#define X_LINKOFF (XRAM_BROWSER + 0xF000UL)
-#define MAX_LINKS 255
-#define X_HIST (XRAM_BROWSER + 0xF200UL)
-#define HIST_MAX 8
+#define BODY_MAX 400
+#define X_HIST (XRAM_BROWSER + 0xF600UL)
+#define HIST_MAX 6
+#define X_STATE (XRAM_BROWSER + 0xFC00UL)  /* url and host while not running */
+
+#define SEARCH_URL "https://lite.duckduckgo.com/lite/"
+#define SEARCH_REF "https://lite.duckduckgo.com/"
 
 enum { B_IDLE, B_LOADING };
+enum { E_NONE, E_URL, E_GO, E_FIELD, E_PICK };
 enum { H_STATUS, H_HEADER, H_BODY, H_CHUNK_SIZE, H_CHUNK_DATA, H_CHUNK_END, H_DONE };
-enum { T_TEXT, T_TAG, T_COMMENT, T_ENTITY, T_SKIP };
-
-#define X_STATE (XRAM_BROWSER + 0xF800UL)  /* url, host, title while not running */
 
 static struct lwip_socket *sock;
-static uint8_t state, editing, redirects, hist_n;
-static uint16_t nlines, top, nlinks, link_used;
+static uint8_t state, editing, redirects, hist_n, scrolled, page_open;
+static uint16_t top, pick_cur, pick_top, cur_idx;
 static uint32_t rx_bytes, last_draw, t_start;
 
 /* HTTP */
@@ -46,417 +46,40 @@ static uint8_t hstate, chunked, is_html, http_status, do_redirect;
 static uint32_t chunk_left;
 static uint8_t hline_n;
 
-/* HTML renderer */
-static uint8_t tstate, in_title, skip_depth_tag, pending_space, blank_lines, in_pre;
-static uint8_t tag_n, ent_n;
-static uint8_t col, word_n, utf8_skip;
-
 /* the buffers exist only while the browser runs (browser and SSH client
- * never run at the same time, so they share the heap); url, host and title
- * are kept in extended RAM in between */
+ * never run at the same time, so they share the heap); url and host are
+ * kept in extended RAM in between */
 struct browser_mem {
-    char url[URL_MAX + 1], host[64], title[COLS + 1];   /* saved: keep first */
+    char url[URL_MAX + 1], host[64];    /* saved: keep first */
     char edit_buf[URL_MAX + 1];
-    char request[URL_MAX + 64 + 128];
-    struct line_edit le;
-    char msg[COLS + 1];
-    char hline[128];
+    char referer[URL_MAX + 1];
     char location[URL_MAX + 1];
-    char tag[200];
-    char ent[10];
-    char line[COLS], word[COLS];
+    char request[1400];
+    struct line_edit le;
+    struct html_item it;
+    char msg[COLS + 1];
+    char prompt[COLS + 1];
+    char hline[128];
+    uint8_t rx[512];
 };
-#define SAVED_SIZE (URL_MAX + 1 + 64 + COLS + 1)
+#define SAVED_SIZE (URL_MAX + 1 + 64)
 static struct browser_mem *bm;
 #define url (bm->url)
 #define host (bm->host)
-#define title (bm->title)
 #define edit_buf (bm->edit_buf)
 #define request (bm->request)
 #define le (bm->le)
 #define msg (bm->msg)
 #define hline (bm->hline)
 #define location (bm->location)
-#define tag (bm->tag)
-#define ent (bm->ent)
-#define line (bm->line)
-#define word (bm->word)
-
-/* ------------------------------------------------------------------ */
-/* page storage                                                        */
-
-static void emit_line(void)
-{
-    if (nlines < MAX_LINES) {
-        memset(line + col, ' ', COLS - col);
-        xram_write(X_TEXT + (uint32_t)nlines * COLS, line, COLS);
-        nlines++;
-    }
-    col = 0;
-}
-
-static void flush_word(void)
-{
-    uint8_t i = 0;
-    if (!word_n)
-        return;
-    if (col && col + word_n + (pending_space ? 1 : 0) > COLS)
-        emit_line();
-    else if (col && pending_space)
-        line[col++] = ' ';
-    pending_space = 0;
-    blank_lines = 0;
-    while (i < word_n) {
-        if (col == COLS)
-            emit_line();
-        line[col++] = word[i++];
-    }
-    word_n = 0;
-}
-
-static void out_char(char c)
-{
-    if (c == ' ') {
-        flush_word();
-        if (col)
-            pending_space = 1;
-        return;
-    }
-    if (word_n == COLS)
-        flush_word();
-    word[word_n++] = c;
-}
-
-/* end the current line; blank = also leave one empty line */
-static void out_break(uint8_t blank)
-{
-    flush_word();
-    pending_space = 0;
-    if (col) {
-        emit_line();
-        blank_lines = 0;
-    }
-    if (blank && !blank_lines && nlines) {
-        emit_line();
-        blank_lines = 1;
-    }
-}
-
-static void out_str(const char *s)
-{
-    while (*s)
-        out_char(*s++);
-}
-
-static void add_link(const char *href, uint8_t n)
-{
-    char num[6];
-    uint16_t off = link_used;
-    if (nlinks >= MAX_LINKS || link_used + n + 1 > LINKS_SIZE)
-        return;
-    xram_write(X_LINKS + off, href, n);
-    xram_write(X_LINKS + off + n, "", 1);
-    xram_write(X_LINKOFF + nlinks * 2, &off, 2);
-    link_used += n + 1;
-    nlinks++;
-    snprintf(num, sizeof(num), "[%u]", nlinks);
-    if (pending_space || !col)
-        flush_word();
-    out_str(num);
-}
-
-static void get_link(uint16_t n, char *buf)
-{
-    uint16_t off;
-    xram_read(X_LINKOFF + (n - 1) * 2, &off, 2);
-    xram_read(X_LINKS + off, buf, URL_MAX);
-    buf[URL_MAX] = 0;
-}
-
-/* ------------------------------------------------------------------ */
-/* HTML                                                                */
 
 static char lower(char c)
 {
     return c >= 'A' && c <= 'Z' ? c + 32 : c;
 }
 
-/* tag name equals s (tag buffer holds "name attr..." without '<' '>') */
-static uint8_t tag_is(const char *t, const char *s)
-{
-    while (*s)
-        if (lower(*t++) != *s++)
-            return 0;
-    return *t == 0 || *t == ' ' || *t == '/' || *t == '\t' || *t == '\n' || *t == '\r';
-}
-
-/* value of attribute `name` in the tag buffer, NUL-terminated in place */
-static char *tag_attr(char *t, const char *name)
-{
-    uint8_t nl = (uint8_t)strlen(name);
-    while (*t) {
-        char *a = t;
-        uint8_t i;
-        for (i = 0; i < nl && lower(a[i]) == name[i]; i++)
-            ;
-        if (i == nl && (a == tag || a[-1] == ' ' || a[-1] == '\t' || a[-1] == '\n')) {
-            char *v = a + nl, q, *e;
-            while (*v == ' ')
-                v++;
-            if (*v != '=') {
-                t++;
-                continue;
-            }
-            v++;
-            while (*v == ' ')
-                v++;
-            q = (*v == '"' || *v == '\'') ? *v++ : 0;
-            for (e = v; *e && (q ? *e != q : (*e != ' ' && *e != '>')); e++)
-                ;
-            *e = 0;
-            return v;
-        }
-        t++;
-    }
-    return NULL;
-}
-
-static void handle_tag(void)
-{
-    char *t = tag;
-    static const char block_tags_bk[] =
-        "p\0div\0h1\0h2\0h3\0h4\0h5\0h6\0ul\0ol\0table\0tr\0section\0article\0"
-        "header\0footer\0nav\0main\0form\0blockquote\0pre\0dl\0dt\0dd\0figure\0"
-        "aside\0center\0hr\0";
-    const char *b;
-    char name[12];
-    uint8_t closing = 0;
-    tag[tag_n] = 0;
-    if (*t == '/') {
-        closing = 1;
-        t++;
-    }
-    if (tag_is(t, "script") || tag_is(t, "style") || tag_is(t, "svg") ||
-        tag_is(t, "template")) {
-        if (!closing && t[strlen(t) - 1] != '/') {
-            skip_depth_tag = tag_is(t, "script") ? 's' : tag_is(t, "style") ? 'y' :
-                             tag_is(t, "svg") ? 'v' : 't';
-            tstate = T_SKIP;
-        }
-        return;
-    }
-    if (tag_is(t, "title")) {
-        in_title = !closing;
-        if (!closing)
-            title[0] = 0;
-        return;
-    }
-    if (tag_is(t, "br")) {
-        flush_word();
-        pending_space = 0;
-        emit_line();
-        return;
-    }
-    if (tag_is(t, "li")) {
-        out_break(0);
-        if (!closing)
-            out_str("* ");
-        flush_word();
-        return;
-    }
-    if (tag_is(t, "a") && !closing) {
-        char *h = tag_attr(t, "href");
-        if (h && *h && *h != '#' && memcmp(h, "javascript:", 11))
-            add_link(h, (uint8_t)(strlen(h) > URL_MAX ? URL_MAX : strlen(h)));
-        return;
-    }
-    if (tag_is(t, "img") && !closing) {
-        char *a = tag_attr(t, "alt");
-        if (a && *a) {
-            out_char('[');
-            out_str(a);
-            out_char(']');
-        }
-        return;
-    }
-    if (tag_is(t, "td") || tag_is(t, "th")) {
-        if (closing)
-            out_char(' ');
-        return;
-    }
-    if (tag_is(t, "pre"))
-        in_pre = !closing;
-    for (b = block_tags_bk; *b; b += strlen(b) + 1) {
-        strcpy(name, b);                /* the table is in this function's flash page */
-        if (tag_is(t, name)) {
-            uint8_t heading = t[0] == 'h' && t[1] >= '1' && t[1] <= '6';
-            out_break(heading || tag_is(t, "p") || tag_is(t, "hr"));
-            if (tag_is(t, "hr"))
-                out_str("------------------------");
-            return;
-        }
-    }
-}
-
-static void text_char(char c)
-{
-    if (in_title) {
-        uint8_t n = (uint8_t)strlen(title);
-        if (c == '\n' || c == '\t' || c == '\r')
-            c = ' ';
-        if (n < COLS && !(c == ' ' && (!n || title[n - 1] == ' '))) {
-            title[n] = c;
-            title[n + 1] = 0;
-        }
-        return;
-    }
-    if (in_pre && c == '\n') {
-        flush_word();
-        emit_line();
-        return;
-    }
-    if (c == ' ' || c == '\n' || c == '\t' || c == '\r')
-        out_char(' ');
-    else
-        out_char(c);
-}
-
-static void entity(void)
-{
-    /* name, replacement pairs */
-    static const char names_bk[] =
-        "amp\0&\0lt\0<\0gt\0>\0quot\0\"\0apos\0'\0nbsp\0 \0copy\0(c)\0"
-        "mdash\0-\0ndash\0-\0hellip\0...\0laquo\0<<\0raquo\0>>\0middot\0.\0"
-        "rsquo\0'\0lsquo\0'\0ldquo\0\"\0rdquo\0\"\0times\0x\0";
-    const char *p;
-    char rep[4];
-    uint8_t i;
-    ent[ent_n] = 0;
-    if (ent[0] == '#') {
-        uint16_t v = 0;
-        const char *q = ent + 1;
-        if (*q == 'x' || *q == 'X') {
-            for (q++; *q; q++)
-                v = v * 16 + (*q <= '9' ? *q - '0' : (*q | 32) - 'a' + 10);
-        } else {
-            for (; *q; q++)
-                v = v * 10 + *q - '0';
-        }
-        text_char(v >= 32 && v < 127 ? (char)v : v == 160 ? ' ' : '?');
-        return;
-    }
-    for (p = names_bk; *p; p += strlen(p) + 1) {
-        uint8_t hit = !strcmp(ent, p);
-        p += strlen(p) + 1;
-        if (hit) {
-            strcpy(rep, p);
-            for (i = 0; rep[i]; i++)
-                text_char(rep[i]);
-            return;
-        }
-    }
-    text_char('&');
-    for (i = 0; i < ent_n; i++)
-        text_char(ent[i]);
-}
-
-static void html_char(char c)
-{
-    switch (tstate) {
-    case T_TEXT:
-        if (c == '<') {
-            tstate = T_TAG;
-            tag_n = 0;
-        } else if (c == '&') {
-            tstate = T_ENTITY;
-            ent_n = 0;
-        } else {
-            text_char(c);
-        }
-        break;
-    case T_ENTITY:
-        if (c == ';' || ent_n == sizeof(ent) - 1 || c == ' ' || c == '<') {
-            entity();
-            tstate = T_TEXT;
-            if (c != ';')
-                html_char(c);
-        } else {
-            ent[ent_n++] = c;
-        }
-        break;
-    case T_TAG:
-        if (tag_n == 3 && !memcmp(tag, "!--", 3)) {
-            tstate = T_COMMENT;
-            tag_n = 0;
-        }
-        if (tstate == T_TAG) {
-            if (c == '>') {
-                tstate = T_TEXT;
-                handle_tag();
-            } else if (tag_n < sizeof(tag) - 1) {
-                tag[tag_n++] = c == '\n' || c == '\r' || c == '\t' ? ' ' : c;
-            }
-            break;
-        }
-        /* fall through */
-    case T_COMMENT:
-        /* tag[0..1] remember the last two characters */
-        if (c == '>' && tag_n >= 2 && tag[0] == '-' && tag[1] == '-') {
-            tstate = T_TEXT;
-            break;
-        }
-        tag[0] = tag[1];
-        tag[1] = c;
-        if (tag_n < 2)
-            tag_n++;
-        break;
-    case T_SKIP:
-        /* wait for "</" + the tag name's first letters */
-        if (c == '<') {
-            tag_n = 1;
-        } else if (tag_n == 1) {
-            tag_n = c == '/' ? 2 : 0;
-        } else if (tag_n == 2) {
-            char want = skip_depth_tag == 'y' ? 's' : skip_depth_tag;
-            tag_n = lower(c) == want ? 3 : 0;
-        } else if (tag_n == 3) {
-            /* "sc"ript / "st"yle / "sv"g / "te"mplate */
-            char want = skip_depth_tag == 's' ? 'c' : skip_depth_tag == 'y' ? 't' :
-                        skip_depth_tag == 'v' ? 'v' : 'e';
-            tag_n = lower(c) == want ? 4 : 0;
-        } else if (tag_n == 4 && c == '>') {
-            tstate = T_TEXT;
-            tag_n = 0;
-        }
-        break;
-    }
-}
-
-static void body_char(uint8_t c)
-{
-    /* UTF-8: one '?' per multi-byte character, a few common ones mapped */
-    if (utf8_skip) {
-        utf8_skip--;
-        return;
-    }
-    if (c >= 0x80) {
-        utf8_skip = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
-        c = c >= 0xC0 ? '?' : 0;
-        if (!c)
-            return;
-    }
-    if (is_html)
-        html_char((char)c);
-    else if (c == '\n') {
-        flush_word();
-        emit_line();
-    } else if (c != '\r') {
-        out_char(c == '\t' ? ' ' : (char)c);
-    }
-}
-
 /* ------------------------------------------------------------------ */
-/* URLs and HTTP                                                       */
+/* URLs                                                                */
 
 /* split url into host, port, path; returns 1 for https, 0 for http, -1 bad */
 static int8_t parse_url(const char *u, char *h, uint16_t *port, const char **path)
@@ -504,6 +127,14 @@ static void resolve(const char *href, char *out)
         if (href[0] == '/') {
             memcpy(out, url, n);
             strncpy(out + n, href, URL_MAX - n);
+        } else if (href[0] == '?') {
+            /* same path, new query */
+            const char *q;
+            for (q = url + n; *q && *q != '?' && *q != '#'; q++)
+                ;
+            n = (uint8_t)(q - url);
+            memcpy(out, url, n);
+            strncpy(out + n, href, URL_MAX - n);
         } else {
             /* relative to the current directory */
             const char *slash = NULL, *q;
@@ -523,18 +154,41 @@ static void resolve(const char *href, char *out)
         *(char *)p = 0;
 }
 
-static void reset_page(void)
+static const char hexd[] = "0123456789ABCDEF";
+
+/* append s to out (size max), percent-encoded; form: as a form value */
+static uint16_t encode(char *out, uint16_t n, uint16_t max, const char *s, uint8_t form)
 {
-    nlines = top = nlinks = link_used = 0;
-    col = word_n = 0;
-    pending_space = 0;
-    blank_lines = 1;
-    in_title = in_pre = 0;
-    tstate = T_TEXT;
-    utf8_skip = 0;
-    title[0] = 0;
-    rx_bytes = 0;
+    for (; *s; s++) {
+        uint8_t c = (uint8_t)*s;
+        uint8_t plain = form ? ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                                (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' ||
+                                c == '~' || c == '*')
+                             : (c > ' ' && c < 0x7F && c != '"' && c != '<' && c != '>');
+        if (plain || (form && c == ' ')) {
+            if (n + 1 >= max)
+                break;
+            out[n++] = c == ' ' ? '+' : (char)c;
+        } else {
+            if (n + 3 >= max)
+                break;
+            out[n++] = '%';
+            out[n++] = hexd[c >> 4];
+            out[n++] = hexd[c & 15];
+        }
+    }
+    out[n] = 0;
+    return n;
 }
+
+/* does the URL line hold search words rather than an address? */
+static uint8_t is_search(const char *s)
+{
+    return !strstr(s, "://") && (strchr(s, ' ') || !strchr(s, '.'));
+}
+
+/* ------------------------------------------------------------------ */
+/* HTTP                                                                */
 
 static void stop(void)
 {
@@ -543,6 +197,10 @@ static void stop(void)
         sock = NULL;
     }
     state = B_IDLE;
+    if (page_open) {
+        html_end();
+        page_open = 0;
+    }
 }
 
 static void sock_event(struct lwip_socket *s, lwip_socket_event_type_t type,
@@ -564,12 +222,18 @@ static void sock_event(struct lwip_socket *s, lwip_socket_event_type_t type,
     }
 }
 
-static void load(const char *u)
+/* load u (GET, or POST with body); ref: Referer or NULL */
+static void load(const char *u, const char *body, const char *ref)
 {
     const char *path;
-    uint16_t port;
+    uint16_t port, n;
     int8_t tls;
     stop();
+    if (ref && ref != bm->referer)
+        strncpy(bm->referer, ref, URL_MAX);
+    if (!ref)
+        bm->referer[0] = 0;
+    bm->referer[URL_MAX] = 0;
     if (u != url)
         strncpy(url, u, URL_MAX);
     if (!strstr(url, "://")) {
@@ -578,15 +242,24 @@ static void load(const char *u)
     }
     url[URL_MAX] = 0;
     tls = parse_url(url, host, &port, &path);
-    reset_page();
     if (tls < 0) {
         strcpy(msg, "bad URL");
         return;
     }
-    snprintf(request, sizeof(request),
-             "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: lwIP-84+/1.0\r\n"
-             "Accept: text/html, text/plain\r\nAccept-Encoding: identity\r\n\r\n",
-             path, host);
+    n = (uint16_t)snprintf(request, sizeof(request), "%s ", body ? "POST" : "GET");
+    n = encode(request, n, 600, path, 0);
+    n += (uint16_t)snprintf(request + n, sizeof(request) - n,
+                            " HTTP/1.0\r\nHost: %s\r\nUser-Agent: lwIP-84+/1.0\r\n"
+                            "Accept: text/html, text/plain\r\nAccept-Encoding: identity\r\n",
+                            host);
+    if (bm->referer[0] && strcmp(bm->referer, url))
+        n += (uint16_t)snprintf(request + n, sizeof(request) - n, "Referer: %s\r\n", bm->referer);
+    if (body)
+        n += (uint16_t)snprintf(request + n, sizeof(request) - n,
+                                "Content-Type: application/x-www-form-urlencoded\r\n"
+                                "Content-Length: %u\r\n\r\n%s", (uint16_t)strlen(body), body);
+    else
+        snprintf(request + n, sizeof(request) - n, "\r\n");
     sock = lwip_socket_create_ex(tls ? LWIP_SOCKET_ALTCP_TLS : LWIP_SOCKET_TCP,
                                  LWIP_NETIF_EXT, NULL, tls ? 120000u : 30000u, 2048u);
     if (!sock) {
@@ -600,6 +273,7 @@ static void load(const char *u)
     is_html = 1;
     http_status = 0;
     location[0] = 0;
+    rx_bytes = 0;
     if (lwip_socket_connect(sock, host, port) != LWIP_OK) {
         stop();
         strcpy(msg, "connect failed");
@@ -610,16 +284,30 @@ static void load(const char *u)
     t_start = k_now_ms();
 }
 
+static void search(const char *words)
+{
+    uint16_t n;
+    char *body = malloc(BODY_MAX + 1);
+    if (!body) {
+        strcpy(msg, "no memory");
+        return;
+    }
+    memcpy(body, "q=", 3);
+    n = encode(body, 2, BODY_MAX - 12, words, 1);
+    strcpy(body + n, "&kl=&df=");
+    load(SEARCH_URL, body, SEARCH_REF);
+    free(body);
+}
+
 static void push_history(void)
 {
     if (!url[0])
         return;
     if (hist_n == HIST_MAX) {
         uint8_t i;
-        char tmp[URL_MAX + 1];
         for (i = 1; i < HIST_MAX; i++) {
-            xram_read(X_HIST + i * (URL_MAX + 1), tmp, URL_MAX + 1);
-            xram_write(X_HIST + (i - 1) * (URL_MAX + 1), tmp, URL_MAX + 1);
+            xram_read(X_HIST + i * (URL_MAX + 1), location, URL_MAX + 1);
+            xram_write(X_HIST + (i - 1) * (URL_MAX + 1), location, URL_MAX + 1);
         }
         hist_n--;
     }
@@ -640,7 +328,7 @@ static void header_line(void)
     }
     if (!hline_n) {                     /* end of headers */
         if (http_status == 30 && location[0] && redirects < 5) {
-            char tmp[URL_MAX + 1];
+            char *tmp = edit_buf;
             redirects++;
             resolve(location, tmp);
             strcpy(location, tmp);
@@ -650,6 +338,10 @@ static void header_line(void)
         }
         hstate = chunked ? H_CHUNK_SIZE : H_BODY;
         chunk_left = 0;
+        html_begin(is_html);
+        page_open = 1;
+        top = 0;
+        scrolled = 0;
         return;
     }
     for (v = hline; *v && *v != ':'; v++)
@@ -667,13 +359,28 @@ static void header_line(void)
         is_html = strstr(v, "html") != NULL || strstr(v, "xml") != NULL;
 }
 
-static void http_byte(uint8_t c)
+static void http_feed(const uint8_t *p, uint16_t n)
 {
-    switch (hstate) {
-    case H_STATUS:
-    case H_HEADER:
-    case H_CHUNK_SIZE:
-    case H_CHUNK_END:
+    uint16_t k;
+    uint8_t c;
+    while (n) {
+        switch (hstate) {
+        case H_BODY:
+            html_feed(p, n);
+            return;
+        case H_CHUNK_DATA:
+            k = n < chunk_left ? n : (uint16_t)chunk_left;
+            html_feed(p, k);
+            p += k;
+            n -= k;
+            if (!(chunk_left -= k))
+                hstate = H_CHUNK_END;
+            continue;
+        case H_DONE:
+            return;
+        }
+        c = *p++;
+        n--;
         if (c == '\n') {
             if (hstate == H_CHUNK_SIZE) {
                 uint8_t i;
@@ -697,28 +404,221 @@ static void http_byte(uint8_t c)
         } else if (c != '\r' && hline_n < sizeof(hline) - 1) {
             hline[hline_n++] = (char)c;
         }
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* forms                                                               */
+
+static uint16_t add_pair(char *out, uint16_t n, const char *name, const char *value)
+{
+    if (!name[0] || n + 4 >= BODY_MAX)
+        return n;
+    if (n)
+        out[n++] = '&';
+    n = encode(out, n, BODY_MAX, name, 1);
+    if (n + 2 >= BODY_MAX)
+        return n;
+    out[n++] = '=';
+    return encode(out, n, BODY_MAX, value, 1);
+}
+
+/* send form f; sub: index of the submit button used or HTML_NONE */
+static void submit(uint8_t f, uint16_t sub)
+{
+    struct html_form fm;
+    struct html_item *it = &bm->it;
+    char *data, *abs, *name = edit_buf, *value = location;
+    uint16_t i, n = 0;
+    if (f == HTML_NOFORM)
+        return;
+    data = malloc(BODY_MAX + 1 + URL_MAX + 1);
+    if (!data) {
+        strcpy(msg, "no memory");
+        return;
+    }
+    abs = data + BODY_MAX + 1;
+    data[0] = 0;
+    for (i = 0; i < html_items; i++) {
+        html_get_item(i, it);
+        if (it->form != f || it->kind == IT_LINK)
+            continue;
+        if ((it->kind == IT_CHECK || it->kind == IT_RADIO) && !(it->flags & ITF_CHECKED))
+            continue;
+        if (it->kind == IT_SUBMIT && i != sub)
+            continue;
+        html_get_str(it->name, name, URL_MAX + 1);
+        if (it->kind == IT_SELECT) {
+            if (!it->nopt)
+                continue;
+            html_get_option(it, it->sel, value, NULL);
+        } else {
+            html_get_str(it->value, value, URL_MAX + 1);
+        }
+        n = add_pair(data, n, name, value);
+    }
+    html_get_form(f, &fm);
+    if (fm.action == HTML_NONE)
+        strcpy(abs, url);
+    else {
+        html_get_str(fm.action, name, URL_MAX + 1);
+        resolve(name, abs);
+    }
+    push_history();
+    redirects = 0;
+    if (fm.post) {
+        load(abs, data, url);
+    } else {
+        char *q = strchr(abs, '?');
+        if (q)
+            *q = 0;
+        if (strlen(abs) + 1 + n > URL_MAX) {
+            strcpy(msg, "form too long");
+        } else {
+            strcat(abs, "?");
+            strcat(abs, data);
+            load(abs, NULL, url);
+        }
+    }
+    free(data);
+}
+
+/* use item number n */
+static void activate(uint16_t n)
+{
+    struct html_item *it = &bm->it;
+    uint16_t idx = html_find_number(n, it);
+    if (idx == HTML_NONE) {
+        strcpy(msg, "no such item");
+        return;
+    }
+    cur_idx = idx;
+    switch (it->kind) {
+    case IT_LINK: {
+        char *abs = malloc(URL_MAX + 1);
+        if (!abs)
+            return;
+        html_get_str(it->name, location, URL_MAX + 1);
+        resolve(location, abs);
+        push_history();
+        redirects = 0;
+        load(abs, NULL, url);
+        free(abs);
         break;
-    case H_BODY:
-        body_char(c);
+    }
+    case IT_TEXT:
+    case IT_PASSWORD:
+    case IT_TEXTAREA: {
+        uint8_t i;
+        html_get_str(it->value, edit_buf, URL_MAX + 1);
+        le_init(&le, edit_buf, URL_MAX, it->kind == IT_PASSWORD);
+        html_get_str(it->name, bm->prompt, 8);
+        if (!bm->prompt[0])
+            strcpy(bm->prompt, "text");
+        i = (uint8_t)strlen(bm->prompt);
+        bm->prompt[i] = ':';
+        bm->prompt[i + 1] = 0;
+        in_mode = IN_LOWER;
+        editing = E_FIELD;
         break;
-    case H_CHUNK_DATA:
-        body_char(c);
-        if (!--chunk_left)
-            hstate = H_CHUNK_END;
+    }
+    case IT_CHECK:
+        it->flags ^= ITF_CHECKED;
+        html_put_item(idx, it);
+        html_show_field(it);
         break;
+    case IT_RADIO: {
+        struct html_item other;
+        uint16_t i;
+        char *name = edit_buf, *oname = location;
+        html_get_str(it->name, name, URL_MAX + 1);
+        for (i = 0; i < html_items; i++) {
+            html_get_item(i, &other);
+            if (i == idx || other.kind != IT_RADIO || other.form != it->form ||
+                !(other.flags & ITF_CHECKED))
+                continue;
+            html_get_str(other.name, oname, URL_MAX + 1);
+            if (!strcmp(name, oname)) {
+                other.flags &= ~ITF_CHECKED;
+                html_put_item(i, &other);
+                if (other.flags & ITF_NUMBERED)
+                    html_show_field(&other);
+            }
+        }
+        it->flags |= ITF_CHECKED;
+        html_put_item(idx, it);
+        html_show_field(it);
+        break;
+    }
+    case IT_SELECT:
+        pick_cur = it->sel;
+        pick_top = pick_cur >= ROWS ? pick_cur - ROWS + 1 : 0;
+        editing = E_PICK;
+        break;
+    case IT_SUBMIT:
+        submit(it->form, idx);
+        break;
+    }
+}
+
+/* a text field was edited */
+static void field_done(void)
+{
+    struct html_item *it = &bm->it;
+    struct html_form fm;
+    uint16_t off = html_add_str(edit_buf);
+    if (off == HTML_NONE) {
+        strcpy(msg, "page memory full");
+        return;
+    }
+    html_get_item(cur_idx, it);
+    it->value = off;
+    html_put_item(cur_idx, it);
+    html_show_field(it);
+    /* ENTER in the only text field of a form sends it */
+    if (it->form != HTML_NOFORM && it->kind != IT_TEXTAREA) {
+        html_get_form(it->form, &fm);
+        if (fm.n_text == 1)
+            submit(it->form, HTML_NONE);
     }
 }
 
 /* ------------------------------------------------------------------ */
 /* screen                                                              */
 
+static void draw_pick(void)
+{
+    struct html_item *it = &bm->it;
+    char label[COLS + 1];
+    uint8_t r, i;
+    ui_clear();
+    ui_status("choose: ENTER  CLEAR");
+    for (r = 0; r < ROWS && pick_top + r < it->nopt; r++) {
+        html_get_option(it, (uint8_t)(pick_top + r), NULL, label);
+        if (pick_top + r == pick_cur) {
+            uint8_t n = (uint8_t)strlen(label);
+            memset(label + n, ' ', COLS - n);
+            label[COLS] = 0;
+            for (i = 0; i < COLS; i++)
+                label[i] |= 0x80;
+        }
+        ui_text(r, label);
+    }
+    lcd_update();
+}
+
 static void draw(void)
 {
     char buf[COLS + 1];
     uint8_t r;
+    if (editing == E_PICK) {
+        draw_pick();
+        return;
+    }
     ui_clear();
     if (editing) {
-        snprintf(buf, sizeof(buf), "%c %s", in_mode_char(), editing == 1 ? "URL" : "link");
+        snprintf(buf, sizeof(buf), "%c %s", in_mode_char(),
+                 editing == E_URL ? "URL or search" : editing == E_GO ? "item number" : "edit field");
     } else if (state == B_LOADING && !rx_bytes && tls84_status(buf, sizeof(buf))) {
         /* key exchange progress */
     } else if (state == B_LOADING) {
@@ -726,25 +626,29 @@ static void draw(void)
     } else if (msg[0]) {
         strcpy(buf, msg);
     } else {
-        snprintf(buf, sizeof(buf), "%s", title[0] ? title : host[0] ? host : "lwIP-84+ web");
+        snprintf(buf, sizeof(buf), "%s", html_title[0] ? html_title : host[0] ? host : "lwIP-84+ web");
     }
     ui_status(buf);
-    for (r = 0; r < ROWS && top + r < nlines; r++) {
-        xram_read(X_TEXT + (uint32_t)(top + r) * COLS, buf, COLS);
-        buf[COLS] = 0;
+    buf[COLS] = 0;
+    for (r = 0; r < ROWS && top + r < html_lines; r++) {
+        html_get_line(top + r, buf);
         ui_text(r, buf);
     }
-    if (!nlines && !editing && state == B_IDLE) {
-        ui_text(1, "Y=    open a URL");
-        ui_text(2, "0-9   follow link [n]");
+    if (!html_lines && !editing && state == B_IDLE) {
+        ui_text(1, "Y=    URL or search");
+        ui_text(2, "0-9 ENTER  use item n");
         ui_text(3, "DEL   back  ENTER reload");
         ui_text(4, "UP/DN LEFT/RIGHT scroll");
         ui_text(5, "CLEAR stop  MODE quit");
         ui_text(6, "ALPHA: 1 > A > a  2nd:");
         ui_text(7, "symbols (see README)");
     }
-    if (editing)
-        le_draw(&le, ROWS - 1, editing == 1 ? ">" : "link ");
+    if (editing == E_URL)
+        le_draw(&le, ROWS - 1, ">");
+    else if (editing == E_GO)
+        le_draw(&le, ROWS - 1, "go ");
+    else if (editing == E_FIELD)
+        le_draw(&le, ROWS - 1, bm->prompt);
     lcd_update();
 }
 
@@ -761,8 +665,8 @@ uint8_t browser_enter(void)
         saved = 1;
     }
     if (!url[0] && !editing) {
-        editing = 1;
-        strcpy(edit_buf, "http://");
+        editing = E_URL;
+        edit_buf[0] = 0;
         le_init(&le, edit_buf, URL_MAX, 0);
         in_mode = IN_LOWER;
     }
@@ -773,10 +677,46 @@ uint8_t browser_enter(void)
 static void browser_leave(void)
 {
     stop();
-    editing = 0;
+    editing = E_NONE;
     xram_write(X_STATE, bm, SAVED_SIZE);
     free(bm);
     bm = NULL;
+}
+
+static uint8_t pick_key(uint8_t k)
+{
+    struct html_item *it = &bm->it;
+    switch (k) {
+    case K_UP:
+        if (pick_cur)
+            pick_cur--;
+        break;
+    case K_DOWN:
+        if (pick_cur + 1 < it->nopt)
+            pick_cur++;
+        break;
+    case K_LEFT:
+        pick_cur = pick_cur > ROWS ? pick_cur - ROWS : 0;
+        break;
+    case K_RIGHT:
+        pick_cur = pick_cur + ROWS < it->nopt ? pick_cur + ROWS : it->nopt - 1;
+        break;
+    case K_ENTER:
+        it->sel = (uint8_t)pick_cur;
+        html_put_item(cur_idx, it);
+        html_show_field(it);
+        editing = E_NONE;
+        return 1;
+    case K_CLEAR:
+    case K_MODE:
+        editing = E_NONE;
+        return 1;
+    }
+    if (pick_cur < pick_top)
+        pick_top = pick_cur;
+    if (pick_cur >= pick_top + ROWS)
+        pick_top = pick_cur - ROWS + 1;
+    return 1;
 }
 
 /* returns 0 when the browser wants to quit */
@@ -784,30 +724,40 @@ uint8_t browser_key(uint8_t k)
 {
     if (k == K_NONE || !bm)
         return 1;
+    if (editing == E_PICK) {
+        pick_key(k);
+        draw();
+        return 1;
+    }
     if (editing) {
         int8_t r = le_key(&le, k);
         if (r == LE_DONE) {
             uint8_t was = editing;
-            editing = 0;
-            if (was == 1) {
-                push_history();
-                redirects = 0;
-                load(edit_buf);
-            } else {
-                uint16_t n = (uint16_t)atoi(edit_buf);
-                if (n >= 1 && n <= nlinks) {
-                    char href[URL_MAX + 1], abs[URL_MAX + 1];
-                    get_link(n, href);
-                    resolve(href, abs);
+            editing = E_NONE;
+            msg[0] = 0;
+            if (was == E_URL) {
+                if (!edit_buf[0]) {
+                    /* nothing */
+                } else if (is_search(edit_buf)) {
                     push_history();
                     redirects = 0;
-                    load(abs);
+                    search(edit_buf);
                 } else {
-                    strcpy(msg, "no such link");
+                    push_history();
+                    redirects = 0;
+                    load(edit_buf, NULL, NULL);
                 }
+            } else if (was == E_GO) {
+                uint16_t n = (uint16_t)atoi(edit_buf);
+                if (n >= 1 && n <= html_numbers)
+                    activate(n);
+                else
+                    strcpy(msg, "no such item");
+            } else {
+                field_done();
             }
         } else if (r == LE_CANCEL) {
-            editing = 0;
+            editing = E_NONE;
         }
         draw();
         return 1;
@@ -818,38 +768,47 @@ uint8_t browser_key(uint8_t k)
         browser_leave();
         return 0;
     case K_YEQU:
-        editing = 1;
-        strcpy(edit_buf, url[0] ? url : "http://");
+        editing = E_URL;
+        strcpy(edit_buf, url);
         le_init(&le, edit_buf, URL_MAX, 0);
         in_mode = IN_LOWER;
         break;
     case K_UP:
         if (top)
             top--;
+        scrolled = 1;
         break;
     case K_DOWN:
-        if (top + ROWS < nlines)
+        if (top + ROWS < html_lines)
             top++;
+        scrolled = 1;
         break;
     case K_LEFT:
         top = top > ROWS ? top - ROWS : 0;
+        scrolled = 1;
         break;
     case K_RIGHT:
-        if (nlines > ROWS)
-            top = top + ROWS < nlines - ROWS ? top + ROWS : nlines - ROWS;
+        if (html_lines > ROWS)
+            top = top + ROWS < html_lines - ROWS ? top + ROWS : html_lines - ROWS;
+        scrolled = 1;
+        break;
+    case K_GRAPH:
+        /* top of the page <-> start of the main content */
+        top = top == 0 && html_main_line != HTML_NONE ? html_main_line : 0;
+        scrolled = 1;
         break;
     case K_DEL:
         if (hist_n) {
             hist_n--;
             xram_read(X_HIST + hist_n * (URL_MAX + 1), url, URL_MAX + 1);
             redirects = 0;
-            load(url);
+            load(url, NULL, NULL);
         }
         break;
     case K_ENTER:
         if (url[0]) {
             redirects = 0;
-            load(url);
+            load(url, NULL, NULL);
         }
         break;
     case K_CLEAR:
@@ -862,8 +821,8 @@ uint8_t browser_key(uint8_t k)
         int16_t c;
         in_mode = IN_NUM;
         c = in_char(k);
-        if (c >= '0' && c <= '9' && nlinks) {
-            editing = 2;
+        if (c >= '0' && c <= '9' && html_numbers) {
+            editing = E_GO;
             edit_buf[0] = (char)c;
             edit_buf[1] = 0;
             le_init(&le, edit_buf, 4, 0);
@@ -876,12 +835,13 @@ uint8_t browser_key(uint8_t k)
 
 void browser_poll(void)
 {
-    uint8_t buf[64];
-    size_t n, i;
+    uint8_t *buf;
+    size_t n;
     if (!bm || state != B_LOADING || !sock)
         return;
+    buf = bm->rx;
     while ((n = lwip_socket_available(sock)) != 0) {
-        n = lwip_socket_read(sock, buf, n > sizeof(buf) ? sizeof(buf) : n);
+        n = lwip_socket_read(sock, buf, n > sizeof(bm->rx) ? sizeof(bm->rx) : n);
         if (!n)
             break;
         if (!rx_bytes) {
@@ -889,30 +849,34 @@ void browser_poll(void)
             dbg_printf("web: first byte after %lu ms\n", k_now_ms() - t_start);
         }
         rx_bytes += n;
-        for (i = 0; i < n && hstate != H_DONE; i++)
-            http_byte(buf[i]);
-        if (hstate == H_DONE)
+        http_feed(buf, (uint16_t)n);
+        if (hstate == H_DONE || html_full)
             break;
     }
-    if (nlines >= MAX_LINES && hstate != H_DONE) {
+    if (!scrolled && !top && html_main_line != HTML_NONE && html_main_line < html_lines)
+        top = html_main_line;
+    if (html_full && hstate != H_DONE) {
         stop();                         /* the text buffer is full */
         strcpy(msg, "page truncated");
+        dbg_printf("web: %lu bytes, %u lines (full), %lu ms\n", rx_bytes, html_lines,
+                   k_now_ms() - t_start);
         draw();
         return;
     } else if (hstate == H_DONE || !lwip_socket_is_active(sock)) {
+        uint8_t got = hstate != H_STATUS;
         stop();
         if (do_redirect) {
             do_redirect = 0;
-            load(location);
+            load(location, NULL, NULL);
             draw();
             return;
         }
-        out_break(0);
-        if (hstate == H_STATUS)
+        if (!got)
             strcpy(msg, msg[0] && memcmp(msg, "error", 5) == 0 ? msg : "no response");
         else
             msg[0] = 0;
-        dbg_printf("web: %lu bytes, %u lines, %lu ms\n", rx_bytes, nlines, k_now_ms() - t_start);
+        dbg_printf("web: %lu bytes, %u lines, %u items, %lu ms\n", rx_bytes, html_lines,
+                   html_items, k_now_ms() - t_start);
         if (!editing)
             draw();                     /* show the result now */
         return;

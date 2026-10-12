@@ -238,8 +238,8 @@ def main():
         m.scan()
         m.glue = set()
         if m.kind == 'banked':
-            for a, b in move_bk_data(m):
-                m.glue.update(range(a + 1, b + 1))   # chunk k stays with k-1
+            for lo, hi in move_bk_data(m):
+                m.glue.update(range(lo + 1, hi + 1))   # chunk k stays with k-1
 
     # Statics of banked modules become globally unique public symbols, so
     # that thunks and other banks can reference them.

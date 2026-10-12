@@ -6,5 +6,5 @@
 #define UI_ROWS 9
 void ui_clear(void);
 void ui_status(const char *s);
-void ui_text(uint8_t row, const char *s);   /* clears the row first */
+void ui_text(uint8_t row, const char *s);   /* clears the row first; bit 7: inverted */
 #endif

@@ -45,7 +45,7 @@ On Windows, enable Internet Connection Sharing for the new adapter.
 | lwIP-CE socket API (`lwIP.c`) | HTTP GET over the Internet works on hardware |
 | SNTP, plain WebSocket | work in emu84 |
 | TLS 1.3 client (`port/tls84.c`), TLS/WSS sockets | works in emu84 (see [TLS](#tls)) |
-| Text web browser (HTTP and HTTPS) | works in emu84 |
+| Text web browser (HTTP and HTTPS, forms, search) | works in emu84 |
 | SSH client (password login, shell) | works in emu84 against OpenSSH 9.6 |
 | Power off with 2nd+ON | fixed (it woke up again at once); verified in emu84 |
 
@@ -118,7 +118,7 @@ pages TI-OS uses.
 
 | Path | Contents |
 |------|----------|
-| `os/` | the OS: start-up, interrupts, far calls, LCD console, keypad (scanned in the timer interrupt), heap, USB driver (`usb.c`), CDC-NCM (`ncm.c`), menu and test console (`main.c`, `apps.c`, `demo.c`), text input (`input.c`), web browser (`browser.c`), SSH client and terminal (`ssh.c`, `term.c`) |
+| `os/` | the OS: start-up, interrupts, far calls, LCD console, keypad (scanned in the timer interrupt), heap, USB driver (`usb.c`), CDC-NCM (`ncm.c`), menu and test console (`main.c`, `apps.c`, `demo.c`), text input (`input.c`), web browser (`browser.c`, HTML renderer `html.c`), SSH client and terminal (`ssh.c`, `term.c`) |
 | `port/` | lwIP-CE platform layer: `sys_arch`, NCM netif, USB Ethernet driver entry points, SNTP clock, TLS 1.3 client (`tls84.c`), X25519 key pair (`kx84.c`) |
 | `crypto/` | SHA-256/HMAC/HKDF, ChaCha20/Poly1305, X25519, random numbers |
 | `include/` | `lwipopts.h`, `arch/cc.h` and small libc additions for SDCC |
@@ -158,28 +158,72 @@ computed in the background when the menu is opened (about 30 s).
 
 ### Web browser
 
-HTTP/1.0 and HTTPS, rendered while the page arrives: tags are dropped,
-block elements start new lines, text is word-wrapped to 24 columns, links
-are numbered `[n]`, redirects and chunked bodies are followed. Non-ASCII
-characters are shown as `?`. The page text (up to 2048 lines) and the
-links are kept in extended RAM.
+HTTP/1.0 and HTTPS with a small HTML renderer of its own (`os/html.c`, no
+CSS, no JavaScript). The page is laid out while it arrives:
+
+- a streaming tokenizer that handles quoted attributes, comments, entities
+  (named, numeric, accented letters) and raw text (`script`, `style`,
+  `title`, `textarea`); UTF-8 is reduced to ASCII (accents are dropped,
+  other characters become `?`);
+- a stack of open elements that closes elements the way browsers do
+  (`p`, `li`, `td`, `tr`, `option`, ...);
+- invisible content is skipped: `script`, `style`, `svg`, `template`,
+  elements with `hidden`, `aria-hidden="true"` or `display:none`, and a few
+  classes (`noprint`, `navbox`, `mw-editsection`, `reference`, the menus of
+  Wikipedia's Vector skin, ...);
+- headings in capitals, lists with bullets or numbers and indentation,
+  table cells side by side (`header: value` for `th`/`td` pairs), `pre`;
+- links and form fields get numbers, drawn inverted in front of them;
+- forms: text and password fields, text areas, check boxes, radio
+  buttons, lists (`select`), submit buttons (`input` and `button`), hidden
+  fields; sent with GET or POST (`application/x-www-form-urlencoded`).
+  Controls outside a form and buttons that are not submit buttons need
+  JavaScript and are left out.
+
+The page text (up to 1600 lines), the items and their strings are kept in
+extended RAM; the first screen appears while the rest is loading and
+`<main>` is scrolled into view.
+
+Words typed into the URL line (anything with a space, or without a dot)
+are searched with [DuckDuckGo Lite](https://lite.duckduckgo.com/lite/),
+which works without JavaScript; its result links are followed directly.
+Google's search needs JavaScript since 2025 and shows only a notice.
+DuckDuckGo may answer too many searches from one address with a picture
+challenge, which cannot be solved here.
 
 | Key | Action |
 |-----|--------|
-| Y= | enter a URL (`http://` is added when there is no scheme) |
-| 0-9, ENTER | follow link `[n]` |
+| Y= | URL or search words (`http://` is added when there is no scheme) |
+| 0-9, ENTER | use item `n`: follow a link, edit a text field, toggle a check box, choose a radio button or a list entry, press a submit button |
 | UP/DOWN, LEFT/RIGHT | scroll by a line, by a screen |
+| GRAPH | top of the page / start of the main content |
 | DEL | back |
 | ENTER | reload |
 | CLEAR | stop loading |
 | MODE | back to the menu (the page is kept) |
+
+While a text field is edited, ENTER stores it; in a form with only one
+text field (search boxes) it also sends the form. A list opens a chooser
+(UP/DOWN, ENTER, CLEAR).
+
+Speed in emu84 (15 MHz): the renderer handles about 40 KB/s; with the
+network stack a page arrives at about 7 KB/s over HTTP (a 337 KB Wikipedia
+article in 49 s). HTTPS adds ChaCha20 at about 7.5 KB/s: a DuckDuckGo
+search takes 10-15 s, the full Wikipedia article about 1.5 minutes, but its
+beginning is on the screen after about 15 s. `tests/html_test.c` runs the
+renderer on the host:
+
+```
+gcc -O2 -DHTML_HOST -I os -o ../../tmp/html_test tests/html_test.c os/html.c
+../../tmp/html_test -i page.html
+```
 
 The TLS handshake with https://example.com/ (real certificate chain) takes
 about 3 s of CPU time in emu84. The first byte of the page arrives 7.8 s
 after ENTER, of which about 3 s is a TCP retransmission of the ClientHello
 that passt causes in the emulator (it drops data sent before its own
 outbound connection is up). It used to be about 40 s plus 30 s for the key
-pair. Over HTTP a 21 KB page loads in 7 s.
+pair.
 
 ### SSH client
 
@@ -340,6 +384,9 @@ experiment, so the handshakes are tuned for speed only:
   cookies come from xorshift32 instead of SHA-256.
 - HMAC-SHA-256 caches the ipad/opad states of the four most recent keys, so
   the TLS 1.3 key schedule needs about half the compressions.
+- Received IP, TCP, UDP and ICMP checksums are not checked
+  (`include/lwipopts.h`; USB packets carry a CRC of their own), which saves
+  about 7% of the CPU time while a page is downloading.
 
 Measured in emu84 (two artefacts of passt are left out: it drops data sent
 before its outbound connection is up, which costs a 3 s TCP retransmission,

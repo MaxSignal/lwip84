@@ -112,6 +112,12 @@
 #define ICMP_TTL 64
 
 #define LWIP_CHKSUM_ALGORITHM 2
+/* experimental speed mode: received checksums are not checked (USB packets
+ * carry a CRC of their own); about 7% of the CPU time while downloading */
+#define CHECKSUM_CHECK_IP 0
+#define CHECKSUM_CHECK_TCP 0
+#define CHECKSUM_CHECK_UDP 0
+#define CHECKSUM_CHECK_ICMP 0
 #define LWIP_RAND() sys_rand32()
 #define SNTP_SET_SYSTEM_TIME(sec) lwip_sntp_set_time((uint32_t)(sec))
 #define SNTP_SERVER_DNS LWIP_DNS

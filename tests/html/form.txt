@@ -1,0 +1,28 @@
+title: Form test
+main: -1
+FORMS                   |
+                        |
+Name 1[calc______]      |
+Pass 2[____________]    |
+3[ ] check 4(*) A 5( ) B|
+6<Two  >                |
+7[hello & bye_____]     |
+8[Send] 9[Other]        |
+10[one_________]        |
+                        |
+Cafe ? naive - 11link   |
+                        |
+form 0: POST /post, 3 text fields
+form 1: GET /get, 1 text fields
+   1 text     form0 who = calc
+   2 password form0 pw = 
+   3 checkbox form0 cb = yes
+   4 radio    form0 r = a (checked)
+   5 radio    form0 r = b
+   6 select   form0 sel sel=1: [1|One] [2|Two] [Three|Three]
+   7 textarea form0 ta = hello & bye
+     hidden   form0 h = x y
+   8 submit   form0 go = Send
+   9 submit   form0 alt = 2
+  10 text     form1 q = one
+  11 link     /x

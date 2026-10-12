@@ -118,17 +118,22 @@ void lcd_draw_char(uint8_t x, uint8_t y, char c)
         }
         return;
     }
-    for (r = 0; r < 6; r++) {
+    /* anywhere else: the cell spans two bytes, one shift per row */
+    if (x >= 96)
+        return;
+    i = x & 7;
+    for (r = 0; r < 6 && y + r < 64; r++) {
         uint8_t bits = r < 5 ? g[r] << 1 : 0;   /* 4-pixel cell, 1 blank column */
-        uint8_t *row = &lcd_buf[(uint16_t)(y + r) * 12];
-        for (i = 0; i < 4; i++) {
-            uint8_t px = x + i;
-            uint8_t m = 0x80 >> (px & 7);
-            if (bits & (8 >> i))
-                row[px >> 3] |= m;
-            else
-                row[px >> 3] &= ~m;
+        uint8_t *row = &lcd_buf[(uint16_t)(y + r) * 12 + (x >> 3)];
+        uint16_t v = (uint16_t)bits << 12, m = 0xF000;
+        uint8_t k;
+        for (k = i; k; k--) {
+            v >>= 1;
+            m >>= 1;
         }
+        row[0] = (row[0] & ~(uint8_t)(m >> 8)) | (uint8_t)(v >> 8);
+        if ((x >> 3) < 11)
+            row[1] = (row[1] & ~(uint8_t)m) | (uint8_t)v;
     }
 }
 

@@ -52,7 +52,7 @@ CFLAGS  = -mz80 --std-sdcc11 --opt-code-size --constseg CONST $(DEFS) \
 COMMON_C = os/isr.c os/far.c os/usb.c os/kbd.c
 COMMON_S = os/crt0.s os/farcall.s os/usb_ll.s
 # everything else is placed in flash pages 1.. by tools/banker.py
-BANKED_C = os/main.c os/demo.c os/apps.c os/input.c os/ui.c os/browser.c os/ssh.c os/term.c os/lcd.c os/fmt.c os/usb_ctl.c os/ncm.c os/heap.c \
+BANKED_C = os/main.c os/demo.c os/apps.c os/input.c os/ui.c os/browser.c os/html.c os/ssh.c os/term.c os/lcd.c os/fmt.c os/usb_ctl.c os/ncm.c os/heap.c \
            port/sys_arch.c port/sntp_time.c port/bytes.c port/imports.c port/netif_ncm.c \
            port/usb_ethernet84.c port/tls84.c port/kx84.c port/lwip_start84.c \
            crypto/sha256.c crypto/chacha.c crypto/x25519.c crypto/rng.c \
