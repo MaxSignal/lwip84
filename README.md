@@ -6,6 +6,7 @@ TI-84 Plus Silver Edition** (Z80 at 15 MHz, 128 KiB RAM) with the
 network interface, a TLS 1.3 client, a text web browser and an SSH client.
 
 ![Wikipedia's Zilog Z80 article on the calculator](docs/wikipedia-z80-text.png)
+![The Japanese Wikipedia article on Z80](docs/wikipedia-z80-ja.png)
 
 - Only the early hardware revisions with **128 KiB of RAM** are supported,
   not the later ones with 48 KiB.
