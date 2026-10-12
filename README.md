@@ -48,6 +48,7 @@ On Windows, enable Internet Connection Sharing for the new adapter.
 | ARP, IPv4, ICMP, UDP, TCP, DHCP, DNS | hardware, emu84 |
 | SNTP, TLS 1.3 client | emu84 |
 | Web browser (HTTP, HTTPS, forms, search) | emu84 |
+| External font (Japanese) | emu84 |
 | SSH client (password login, shell) | emu84, against OpenSSH 9.6 |
 
 Hardware: TI-84 Plus (revision 2, boot code 1.00) on Linux; the hardware
@@ -76,8 +77,9 @@ HTTP/1.0 and HTTPS with its own HTML renderer (`os/html.c`; no CSS, no
 JavaScript). The page is laid out as it arrives, 24 columns wide:
 
 - headings, paragraphs, lists, tables (`header: value` for `th`/`td`
-  pairs), `pre`; entities and UTF-8 are reduced to ASCII (accents are
-  dropped, other characters become `?`);
+  pairs), `pre`; entities and UTF-8 are decoded: Latin letters lose their
+  accents, Japanese and other characters of the [external font](#external-font)
+  are shown with it, the rest become `?`;
 - invisible content is skipped (`script`, `style`, `svg`, `hidden`,
   `display:none`, Wikipedia's menus and edit links, ...);
 - links and form fields are numbered, the number drawn inverted;
@@ -170,6 +172,7 @@ make                      # build-84p/lwip84.8xu (OS upgrade) and lwip84.rom
 make MODEL=84pse          # TI-84 Plus Silver Edition
 make DEBUG=1              # debug build: log on the LCD (or in emu84)
 make emu                  # the emulator, build-84p/emu84
+make FONT=other.bdf       # another external font (FONT= for none)
 ```
 
 The Makefile looks for SDCC in `../tools/sdcc-4.4.0/bin` and other tools in
@@ -212,11 +215,41 @@ SDCC output: calls to another page and function pointers go through a
 keeps the return information on a far stack. Constants named `*_bk` (font,
 tables) stay in flash next to the function that uses them. The boot code
 does not run code on pages 08h-29h (08h-69h on the SE), so code is on pages
-01-07 and 33-3B (73-7B on the SE); 08h-29h are free for data.
+01-07 and 33-39 plus the crypto page 3B (73-79 and 7B on the SE). Page 3Ah
+(7Ah) is left alone, the boot code keeps the OS header there. Pages 08h-29h
+hold data: the external font from 08h on, the rest is free.
 
 The six other RAM pages (96 KiB) are reached through `xram_read` /
 `xram_write` and hold the web page (64 KiB), the SSH scrollback (24 KiB)
 and the console history.
+
+### External font
+
+Characters that cannot be shown in ASCII are drawn with a bitmap font on the
+flash data pages. The default is [k6x8](https://littlelimit.net/k6x8.htm)
+(6x8 pixels, JIS levels 1 and 2 with kana, Greek and Cyrillic, 7096
+characters), which makes Japanese pages readable.
+
+- `tools/mkfont84.py` converts a BDF font (cells up to 8x8 pixels, code
+  points up to U+FFFF) into a 64 KB blob: a table by the high byte of the
+  code point, the sorted low bytes, a width bit and 8 bytes of pixels per
+  glyph, and a checksum.
+- `tools/mkrom.py` puts it on pages 08h-0Bh and adds them to the `.8xu`.
+  mktiupgrade adds the first page of every 64 KB flash sector, and the boot
+  code erases a sector when it receives that page, so the data pages are
+  written cleanly.
+- `os/font.c` checks the checksum at start-up (the network console's status
+  shows `font ok`; without a valid font such characters stay `?`) and finds
+  a glyph by binary search, with a cache of recent characters.
+- In page text a glyph takes two cells: a lead byte 01h-1Fh and a trail byte
+  01h-FFh, which together give the glyph number, so text stays a plain
+  string and ASCII keeps its meaning. A row with glyphs is 8 pixels high
+  (7 rows of text), other rows stay 6 pixels (9 rows). Lines may break
+  between two glyphs, as Japanese has no spaces.
+
+A Japanese Wikipedia article is laid out at about 5 KB/s (emu84; English
+pages about 9 KB/s). `html_test -f build-84p/font.bin FILE.html` shows the
+page with the font on the host.
 
 ### Network
 
@@ -303,4 +336,6 @@ gcc -O2 -DHTML_HOST -I os -o ../tmp/html_test tests/html_test.c os/html.c os/fon
 ## License
 
 BSD (see `COPYING`); lwIP is BSD, `emu/third_party/z80.h` is from
-[floooh/chips](https://github.com/floooh/chips) (zlib).
+[floooh/chips](https://github.com/floooh/chips) (zlib), the k6x8 font in
+`fonts/k6x8/` is by Num Kadoma and free to use, copy and modify
+(`fonts/k6x8/k6x8.txt`).
