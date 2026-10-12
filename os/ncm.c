@@ -55,10 +55,11 @@ void ncm_reset(void)
     notify_state = 0;
 }
 
+/* called for every alternate setting the host selects, also the same one
+ * again after a bus reset and re-enumeration: always start over, so the
+ * NETWORK_CONNECTION notification is sent again */
 void ncm_enable(uint8_t on)
 {
-    if (on == enabled)
-        return;
     enabled = on;
     rx_len = 0;
     rx_ready = 0;

@@ -631,6 +631,8 @@ static int do_command(char *line)
         key_set("on", 1);
         run_ms(100);
         key_set("on", 0);
+    } else if (!strcmp(argv[0], "usbreset")) {
+        usb_host_reset();
     } else if (!strcmp(argv[0], "screen")) {
         if (argc > 1)
             screen_pbm(argv[1]);

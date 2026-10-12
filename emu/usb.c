@@ -776,6 +776,10 @@ static void ntb_from_device(const uint8_t *b, int len)
 static void ntb_build(void)
 {
     uint8_t frame[2048];
+    /* like Linux cdc_ncm: no carrier, no traffic, until the device sends
+     * NETWORK_CONNECTION (connected) on the notification endpoint */
+    if (!u.ncm_up)
+        return;
     uint8_t *b = u.out_xfer;
     int pos = 12, nfr = 0;
     int idx[16], dl[16];
@@ -925,6 +929,21 @@ void usb_shutdown(void)
                 u.frames_to_dev, u.frames_from_dev, u.ntb_bad);
     if (u.net_fd >= 0)
         close(u.net_fd);
+}
+
+/* "usbreset": the host resets the bus and enumerates the device again, as
+ * Linux does after errors or a failed resume */
+void usb_host_reset(void)
+{
+    if (!u.connected)
+        return;
+    u.cx_active = 0;
+    u.ncm_up = 0;
+    u.in_len = u.out_len = u.out_pos = 0;
+    u.out_zlp = 0;
+    u.state = H_IDLE;
+    u.t_active = 0;
+    fprintf(stderr, "usb: host reset\n");
 }
 
 void usb_tick(uint64_t now)

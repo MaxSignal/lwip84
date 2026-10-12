@@ -47,6 +47,7 @@ extern struct ti84 ti;
 /* usb.c */
 void usb_init(int attach_host, const char *tap);
 void usb_shutdown(void);
+void usb_host_reset(void);
 int usb_port_in(uint8_t port, uint8_t *val);
 int usb_port_out(uint8_t port, uint8_t val);
 void usb_tick(uint64_t now_ps);
