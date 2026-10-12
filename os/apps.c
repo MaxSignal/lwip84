@@ -1,17 +1,17 @@
-/* apps.c - test applications on lwIP-CE's socket API (lwIP.h), written the
- * same way as the CE examples: create a socket, react to events, read the
- * receive ring from the main loop. */
+/* apps.c - test applications of the network console on port/sock84.c:
+ * create a socket, react to its events, read from the main loop. */
 #include <string.h>
 #include "kernel.h"
 #include "apps.h"
-#include "lwIP.h"
-#include "lwip/sntp_time.h"
+#include "sock84.h"
+#include "time84.h"
+#include "lwip/apps/sntp.h"
 #include "x25519.h"
 #include "chacha.h"
 #include "aes.h"
 #include "sha256.h"
 
-static struct lwip_socket *app_sock;
+static struct sock *app_sock;
 static uint8_t app_lines;          /* reply lines still to print */
 static uint16_t app_rx_total;
 static char app_req[112];
@@ -20,38 +20,26 @@ static uint8_t app_line_len;
 static uint32_t app_started;
 
 static const char *const status_names[] = {
-    "init", "services", "resolving", "connecting", "connected",
-    "closing", "closed", "reset", "error"};
+    "init", "network", "resolving", "connecting", "connected", "closed", "error"};
 
-static void app_event(struct lwip_socket *sock, lwip_socket_event_type_t type,
-                      const void *ev_data, void *arg)
+static void app_event(struct sock *sock, uint8_t ev, uint8_t a, int8_t err)
 {
-    (void)arg;
-    if (type == LWIP_SOCKET_EV_STATE_CHANGE) {
-        const lwip_socket_state_data_t *st = ev_data;
-        con_printf("[%s]\n", status_names[st->current]);
-        if (st->current == LWIP_STATUS_CONNECTED && app_req[0]) {
-            lwip_error_t e = lwip_socket_write(sock, (const uint8_t *)app_req,
-                                               strlen(app_req));
-            if (e != LWIP_OK)
-                con_printf("write: %u\n", e);
-        }
-    } else if (type == LWIP_SOCKET_EV_ERROR) {
-        const lwip_socket_error_data_t *er = ev_data;
-        con_printf("error c%u o%u r%d e%u\n", er->component, er->operation, er->raw_error,
-                   er->err);
+    if (ev == SOCK_EV_STATE) {
+        con_printf("[%s]\n", status_names[a]);
+        if (a == SOCK_CONNECTED && app_req[0] && sock_write(sock, app_req, (uint16_t)strlen(app_req)))
+            con_puts("write failed\n");
+    } else {
+        con_printf("error %u/%d\n", a, err);
     }
 }
 
-static void app_start(lwip_socket_type_t type, const char *host, uint16_t port, uint8_t lines)
+static void app_start(uint8_t type, const char *host, uint16_t port, uint8_t lines)
 {
-    lwip_error_t e;
     if (app_sock) {
         con_puts("busy\n");
         return;
     }
-    app_sock = lwip_socket_create(type, LWIP_NETIF_EXT, NULL,
-                                  type == LWIP_SOCKET_ALTCP_TLS ? 120000u : 30000u);
+    app_sock = sock_new(type, type == SOCK_TLS ? 120000u : 30000u, app_event);
     if (!app_sock) {
         con_puts("socket: no memory\n");
         return;
@@ -60,12 +48,10 @@ static void app_start(lwip_socket_type_t type, const char *host, uint16_t port, 
     app_rx_total = 0;
     app_line_len = 0;
     app_started = k_now_ms();
-    lwip_socket_on_event(app_sock, LWIP_SOCKET_EVENTF_ALL, app_event, NULL);
     con_printf("%s:%u\n", host, port);
-    e = lwip_socket_connect(app_sock, host, port);
-    if (e != LWIP_OK) {
-        con_printf("connect: %u\n", e);
-        lwip_socket_destroy(app_sock);
+    if (sock_connect(app_sock, host, port)) {
+        con_puts("connect failed\n");
+        sock_free(app_sock);
         app_sock = NULL;
     }
 }
@@ -74,26 +60,26 @@ void app_http_get(const char *host)
 {
     snprintf(app_req, sizeof(app_req),
              "GET / HTTP/1.0\r\nHost: %s\r\nUser-Agent: lwIP-84+\r\n\r\n", host);
-    app_start(LWIP_SOCKET_TCP, host, 80, 3);
+    app_start(SOCK_TCP, host, 80, 3);
 }
 
 void app_https_get(const char *host, uint16_t port)
 {
     snprintf(app_req, sizeof(app_req),
              "GET / HTTP/1.0\r\nHost: %s\r\nUser-Agent: lwIP-84+\r\n\r\n", host);
-    app_start(LWIP_SOCKET_ALTCP_TLS, host, port, 4);
+    app_start(SOCK_TLS, host, port, 4);
 }
 
 void app_download(const char *host, uint16_t port)
 {
     app_req[0] = 0;
-    app_start(LWIP_SOCKET_TCP, host, port, 0);
+    app_start(SOCK_TCP, host, port, 0);
 }
 
 void app_tcp_echo(const char *host, uint16_t port)
 {
     strcpy(app_req, "hello from a TI-84 Plus\n");
-    app_start(LWIP_SOCKET_TCP, host, port, 2);
+    app_start(SOCK_TCP, host, port, 2);
 }
 
 static void app_consume(const uint8_t *buf, size_t n)
@@ -121,27 +107,30 @@ void app_poll(void)
     size_t n;
     if (!app_sock)
         return;
-    while ((n = lwip_socket_available(app_sock)) != 0) {
-        n = lwip_socket_read(app_sock, buf, n > sizeof(buf) ? sizeof(buf) : n);
+    while ((n = sock_available(app_sock)) != 0) {
+        n = sock_read(app_sock, buf, n > sizeof(buf) ? sizeof(buf) : n);
         if (!n)
             break;
         app_rx_total += n;
         app_consume(buf, n);
     }
-    if (!lwip_socket_is_active(app_sock)) {
+    if (!sock_is_active(app_sock)) {
         uint32_t ms = k_now_ms() - app_started;
         con_printf("done: %u bytes, %lu ms\n", app_rx_total, ms);
         if (ms)
             con_printf("%lu bytes/s\n", (uint32_t)app_rx_total * 1000u / ms);
-        lwip_socket_destroy(app_sock);
+        sock_free(app_sock);
         app_sock = NULL;
     }
 }
 
 void app_sntp(void)
 {
-    lwip_error_t e = lwip_request_services(LWIP_SOCKET_SVC_SNTP, 15000);
-    con_printf("sntp request: %u\n", e);
+    sntp_stop();
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    sntp_setservername(0, SNTP_SERVER_ADDRESS);
+    sntp_init();
+    con_puts("sntp started\n");
 }
 
 /* days since 1970-01-01 to a civil date (H. Hinnant's algorithm) */
@@ -166,11 +155,11 @@ void app_show_time(void)
     uint32_t t;
     uint16_t y;
     uint8_t mo, d;
-    if (!lwip_sntp_time_was_set()) {
+    if (!time84_valid()) {
         con_puts("time not set (MODE)\n");
         return;
     }
-    t = lwip_sntp_get_unix_time();
+    t = time84_now();
     civil_from_days((int32_t)(t / 86400u), &y, &mo, &d);
     t %= 86400u;
     /* note: SDCC passes arguments cast to (uint8_t) as single bytes to

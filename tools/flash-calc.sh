@@ -10,7 +10,7 @@
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 ti84p=$(cd "$here/.." && pwd)
-PATH=$ti84p/../../tools/local/bin:$PATH
+PATH=$ti84p/../tools/local/bin:$PATH
 debug=; romdump=1; backup=
 for a in "$@"; do
     case $a in
@@ -19,7 +19,7 @@ for a in "$@"; do
     *) backup=$a ;;
     esac
 done
-backup=${backup:-$ti84p/../../backup/$(date +%Y%m%d-%H%M%S)}
+backup=${backup:-$ti84p/../backup/$(date +%Y%m%d-%H%M%S)}
 IFACE=enx028484000001
 
 echo "== calculator"

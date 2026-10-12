@@ -1,4 +1,4 @@
-# lwIP-84+ : lwIP-CE on the TI-84 Plus / Plus SE (Z80) as a standalone OS.
+# lwIP-84+ : lwIP on the TI-84 Plus / Plus SE (Z80) as a standalone OS.
 #
 #   make            release OS image    (build-84p/lwip84.rom, build-84p/lwip84.8xu)
 #   make DEBUG=1    debug build with emulator console output (build-debug-84p/)
@@ -7,10 +7,10 @@
 
 # SDCC 4.4.0 is required: 4.5.0 miscompiles variable shifts such as
 # (8 >> i) inside larger functions (shift count lost).
-SDCC_BIN ?= $(abspath ../../tools/sdcc-4.4.0/bin)
-TOOLS    ?= $(abspath ../../tools/local/bin)
+SDCC_BIN ?= $(abspath ../tools/sdcc-4.4.0/bin)
+TOOLS    ?= $(abspath ../tools/local/bin)
 export PATH := $(SDCC_BIN):$(TOOLS):$(PATH)
-export TMPDIR ?= $(abspath ../../tmp)
+export TMPDIR ?= $(abspath ../tmp)
 
 CC      = sdcc
 AS      = sdasz80
@@ -45,33 +45,34 @@ DEFS    =
 endif
 
 CFLAGS  = -mz80 --std-sdcc11 --opt-code-size --constseg CONST $(DEFS) \
-          -DLWIP_PORT_TI84P=1 -DFE_ASM -DLWIP_TRACEBACK_DEPTH=4u -DLWIP_TLS_FLOOR_BYTES=0u '-D__attribute__(x)=' \
-          -I include -I os -I port -I crypto -I ../src/include -I ../src
+          -DFE_ASM '-D__attribute__(x)=' \
+          -I include -I os -I port -I crypto -I $(LWIP_SRC)/include
 
 # modules that must stay in page 0 (interrupt path, runtime)
 COMMON_C = os/isr.c os/far.c os/usb.c os/kbd.c
 COMMON_S = os/crt0.s os/farcall.s os/usb_ll.s
 # everything else is placed in flash pages 1.. by tools/banker.py
 BANKED_C = os/main.c os/demo.c os/apps.c os/input.c os/ui.c os/browser.c os/html.c os/ssh.c os/term.c os/lcd.c os/fmt.c os/usb_ctl.c os/ncm.c os/heap.c \
-           port/sys_arch.c port/sntp_time.c port/bytes.c port/imports.c port/netif_ncm.c \
-           port/usb_ethernet84.c port/tls84.c port/kx84.c port/lwip_start84.c \
+           port/sys_arch.c port/time84.c port/netif_ncm.c port/net84.c port/sock84.c \
+           port/tls84.c port/kx84.c \
            crypto/sha256.c crypto/chacha.c crypto/aes.c crypto/x25519.c crypto/rng.c \
            $(LWIP_C)
 
-# lwIP-CE sources shared with the TI-84 Plus CE build
-LWIP_SRC = ../src
+# lwIP (git submodule lwip/, STABLE-2_2_1_RELEASE); tcp_in.c is compiled
+# with patches/tcp-persist-timer.patch applied
+LWIP_SRC = lwip/src
 LWIP_C = $(addprefix $(LWIP_SRC)/, \
            core/init.c core/def.c core/dns.c core/inet_chksum.c core/ip.c core/mem.c \
-           core/memp.c core/netif.c core/pbuf.c core/raw.c core/tcp.c core/tcp_in.c \
+           core/memp.c core/netif.c core/pbuf.c core/raw.c core/tcp.c \
            core/tcp_out.c core/timeouts.c core/udp.c core/stats.c core/sys.c \
            core/ipv4/dhcp.c core/ipv4/etharp.c core/ipv4/icmp.c core/ipv4/ip4.c \
-           core/ipv4/ip4_addr.c netif/ethernet.c core/logging.c core/app_config.c \
-           core/dispatch.c core/teardown.c core/altcp.c core/altcp_tcp.c core/altcp_alloc.c \
-           apps/sntp/sntp.c apps/altcp_ws/altcp_ws.c drivers/mem.c lwIP.c)
+           core/ipv4/ip4_addr.c netif/ethernet.c core/altcp.c core/altcp_tcp.c \
+           core/altcp_alloc.c apps/sntp/sntp.c)
 
 COMMON_ASM = $(patsubst %.c,$(B)/asm/%.asm,$(COMMON_C)) $(patsubst %.s,$(B)/asm/%.asm,$(COMMON_S))
 BANKED_ASM = $(patsubst $(LWIP_SRC)/%.c,$(B)/asm/lwip/%.asm,$(filter $(LWIP_SRC)/%,$(BANKED_C))) \
-             $(patsubst %.c,$(B)/asm/%.asm,$(filter-out $(LWIP_SRC)/%,$(BANKED_C)))
+             $(patsubst %.c,$(B)/asm/%.asm,$(filter-out $(LWIP_SRC)/%,$(BANKED_C))) \
+             $(B)/asm/lwip/core/tcp_in.asm
 
 all: $(B)/lwip84.rom $(B)/lwip84.8xu
 
@@ -82,8 +83,16 @@ $(B)/asm/%.asm: %.c $(HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -S $< -o $@
 
-# shared lwIP-CE sources live outside this directory
 $(B)/asm/lwip/%.asm: $(LWIP_SRC)/%.c $(HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -S $< -o $@
+
+$(B)/patched/core/tcp_in.c: $(LWIP_SRC)/core/tcp_in.c patches/tcp-persist-timer.patch
+	@mkdir -p $(dir $@)
+	cp $< $@
+	patch -s -p2 -d $(B)/patched < patches/tcp-persist-timer.patch
+
+$(B)/asm/lwip/core/tcp_in.asm: $(B)/patched/core/tcp_in.c $(HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -S $< -o $@
 

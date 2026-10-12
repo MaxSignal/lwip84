@@ -16,11 +16,11 @@
 #include "ncm.h"
 #include "demo.h"
 #include "apps.h"
-#include "lwIP.h"
+#include "lwip/init.h"
 #include "lwip/netif.h"
 #include "lwip/dns.h"
 #include "lwip/ip4_addr.h"
-#include "ti84p_usb_ethernet.h"
+#include "net84.h"
 #include "tls84.h"
 #include "kx84.h"
 #include "input.h"
@@ -38,8 +38,6 @@ enum { A_CONSOLE, A_MENU, A_WEB, A_SSH };
 static uint8_t app;
 
 #define DEMO_HOST "example.com"
-
-bool lwip_start(void);
 
 static uint8_t main_r;
 static const char *const usb_names[] = {"off", "wait", "dflt", "addr", "cfg"};
@@ -100,18 +98,12 @@ void k_power_off(void)
     usb_start();
 }
 
-static void ip_str(char *buf, const uint8_t *a)
-{
-    snprintf(buf, 16, "%u.%u.%u.%u", a[0], a[1], a[2], a[3]);
-}
-
 static void status_line(void)
 {
     static char last[CON_COLS + 1];
     char buf[CON_COLS + 1], ip[16];
-    lwip_netif_info_t info;
-    if (lwip_default_netif_info(&info) && info.has_ipv4) {
-        ip_str(ip, info.ipv4_addr);
+    if (netif_default && !ip4_addr_isany_val(*netif_ip4_addr(netif_default))) {
+        strcpy(ip, ip4addr_ntoa(netif_ip4_addr(netif_default)));
     } else {
         strcpy(ip, ncm_link_up() ? "dhcp..." : "no link");
     }
@@ -124,13 +116,13 @@ static void status_line(void)
 
 static void show_info(void)
 {
-    con_printf("lwIP-CE %s\n", lwip_version_string());
+    con_printf("lwIP %s\n", LWIP_VERSION_STRING);
     con_printf("usb %s err %u 4C=%02x 4D=%02x\n", usb_names[usb_state], usb_last_error,
                port_usb_status, port_usb_lines);
     con_printf("ntb rx %u bad %u fr %u/%u\n", ncm_stats.rx_ntbs, ncm_stats.rx_bad,
                ncm_stats.rx_frames, ncm_stats.tx_frames);
-    if (eth_ncm_netif)
-        con_printf("gw %s\n", ip4addr_ntoa(netif_ip4_gw(eth_ncm_netif)));
+    if (net84_netif)
+        con_printf("gw %s\n", ip4addr_ntoa(netif_ip4_gw(net84_netif)));
     con_printf("dns %s\n", ipaddr_ntoa(dns_getserver(0)));
     con_printf("heap %u free\n", heap_free_bytes());
 }
@@ -138,10 +130,9 @@ static void show_info(void)
 static const char *gateway_str(void)
 {
     static char buf[16];
-    lwip_netif_info_t info;
-    if (!lwip_default_netif_info(&info) || !info.has_ipv4_gateway)
+    if (!netif_default || ip4_addr_isany_val(*netif_ip4_gw(netif_default)))
         return "192.168.84.1";
-    ip_str(buf, info.ipv4_gateway);
+    strcpy(buf, ip4addr_ntoa(netif_ip4_gw(netif_default)));
     return buf;
 }
 
@@ -227,16 +218,13 @@ void main(void)
     con_clear();
     con_puts("lwIP-84+ " __DATE__ "\n");
     con_flush();
-    if (!lwip_start())
-        con_printf("lwip_start failed: %u\n", lwip_start_last_error());
-    else if (!lwip_network_up())
-        con_printf("network_up failed: %u\n", lwip_start_last_error());
+    net84_init();
     dbg_printf("lwip up, heap %u%s\n", heap_free_bytes(), k_is_emulator ? " (emu)" : "");
     if (usb_last_error)
         con_printf("usb start error %u\n", usb_last_error);
     con_puts("connect USB to a PC\nAPPS: web browser, SSH\n");
     for (;;) {
-        lwip_service_events();
+        net84_poll();
         now = k_now_ms();
         /* the rest every 10 ms: each of these is a far call, and the loop
          * spins a few hundred times a second while packets flow */
@@ -286,8 +274,8 @@ void main(void)
             show_info();
             break;
         case K_WINDOW:
-            if (eth_ncm_netif)
-                demo_ping(netif_ip_gw4(eth_ncm_netif));
+            if (net84_netif)
+                demo_ping(netif_ip_gw4(net84_netif));
             break;
         case K_ZOOM:
             demo_dns(DEMO_HOST);

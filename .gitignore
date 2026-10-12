@@ -2,3 +2,4 @@ build/
 build-*/
 keys/
 out/
+__pycache__/

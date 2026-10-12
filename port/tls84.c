@@ -1,6 +1,6 @@
 /* tls84.c - a minimal TLS 1.3 client for the TI-84 Plus as an lwIP altcp
- * layer.  It replaces lwIP-CE's TLS stack (eZ80 assembly) behind the same
- * entry points, so lwip_socket_create(LWIP_SOCKET_TLS / _WSS) works.
+ * layer: tls84_new() returns an altcp_pcb that is used like a TCP one
+ * (port/sock84.c does that for SOCK_TLS sockets).
  *
  * Only what is needed to talk to a server is done:
  *   - two cipher suites, TLS_AES_128_GCM_SHA256 (offered alone: AES is
@@ -25,10 +25,6 @@
 #include "lwip/pbuf.h"
 #include "lwip/tcp.h"
 #include "lwip/priv/tcp_priv.h"
-#include "tls/includes/tls.h"
-#include "tls/includes/random.h"
-#include "tls/includes/bytes.h"
-#include "apps/altcp_tls/altcp_tls_ce.h"
 #include "kernel.h"
 #include "sha256.h"
 #include "chacha.h"
@@ -88,7 +84,6 @@ struct tls84 {
     char host[DNS_MAX_NAME_LENGTH + 1];
 };
 
-struct tls_context tls_ctx;
 const char *tls84_last_error = "";
 static struct tls84 *tls_list;
 
@@ -131,6 +126,13 @@ static void ticket_drop(void)
 }
 
 /* ------------------------------------------------------------------ */
+
+static void memzero(void *p, size_t n)
+{
+    volatile uint8_t *q = p;
+    while (n--)
+        *q++ = 0;
+}
 
 static void fail(struct tls84 *st, const char *why)
 {
@@ -404,9 +406,9 @@ static void server_finished(struct tls84 *st)
     sha256_update(&st->th, fin, 36);
     sha256_final(&st->th, th);
     hkdf_expand_label(st->secret, "res master", th, 32, st->res_master, 32);
-    tls_secure_memzero(st->secret, 32);
-    tls_secure_memzero(st->c_hs, 32);
-    tls_secure_memzero(sec, 32);
+    memzero(st->secret, 32);
+    memzero(st->c_hs, 32);
+    memzero(sec, 32);
     st->phase = P_APP;
     dbg_printf("tls: handshake done after %lu ms\n", k_now_ms() - st->t_hello);
     if (st->conn->connected)
@@ -614,8 +616,8 @@ static void kex_done(struct tls84 *st)
     st->s_seq = st->c_seq = 0;
     hkdf_expand_label(hs, "derived", empty_hash, 32, s_hs, 32);
     hkdf_extract(s_hs, zeros32, st->secret);
-    tls_secure_memzero(shared, 32);
-    tls_secure_memzero(hs, 32);
+    memzero(shared, 32);
+    memzero(hs, 32);
     st->phase = P_HS;
 }
 
@@ -1033,7 +1035,7 @@ static void f_dealloc(struct altcp_pcb *conn)
     free(st->acc);
     free(st->kex);
     free(st->nst);
-    tls_secure_memzero(st, sizeof(*st));
+    memzero(st, sizeof(*st));
     free(st);
     conn->state = NULL;
 }
@@ -1053,38 +1055,14 @@ static const struct altcp_functions tls84_functions = {
 };
 
 /* ------------------------------------------------------------------ */
-/* lwIP-CE entry points                                                */
+/* entry points                                                        */
 
-bool tls_init(void)
-{
-    tls_ctx.initialized = true;
-    return true;
-}
-
-void tls_cleanup(void)
-{
-}
-
-struct altcp_tls_ce_config *altcp_tls_ce_create_config_client_ecdhe(const char *hostname)
-{
-    struct altcp_tls_ce_config *c = calloc(1, sizeof(*c));
-    if (c)
-        c->hostname = hostname;
-    return c;
-}
-
-void altcp_tls_ce_free_config(struct altcp_tls_ce_config *conf)
-{
-    free(conf);
-}
-
-struct altcp_pcb *altcp_tls_ce_new(struct altcp_tls_ce_config *config, u8_t ip_type)
+/* a TLS connection to host (server name and session ticket key) */
+struct altcp_pcb *tls84_new(const char *host)
 {
     struct altcp_pcb *inner, *conn;
     struct tls84 *st;
-    if (!config || !config->hostname)
-        return NULL;
-    inner = altcp_tcp_new_ip_type(ip_type);
+    inner = altcp_tcp_new_ip_type(IPADDR_TYPE_V4);
     if (!inner)
         return NULL;
     conn = altcp_alloc();
@@ -1096,7 +1074,7 @@ struct altcp_pcb *altcp_tls_ce_new(struct altcp_tls_ce_config *config, u8_t ip_t
         altcp_close(inner);
         return NULL;
     }
-    strncpy(st->host, config->hostname, sizeof(st->host) - 1);
+    strncpy(st->host, host, sizeof(st->host) - 1);
     st->conn = conn;
     st->phase = P_WAIT_KEY;
     st->next = tls_list;
@@ -1130,13 +1108,6 @@ void tls84_poll(void)
         if (!tls_process(st))
             return;                     /* list changed */
     }
-}
-
-/* Used by WebSocket masking keys and the TLS randoms */
-void *tls_random_bytes(void *buffer, size_t len)
-{
-    rng_bytes(buffer, len);
-    return buffer;
 }
 
 /* what the newest TLS connection is doing, for status lines */

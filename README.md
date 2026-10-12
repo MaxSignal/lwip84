@@ -1,11 +1,19 @@
-# lwIP-84+: lwIP-CE on the TI-84 Plus / TI-84 Plus Silver Edition
+# lwIP-84+: lwIP on the TI-84 Plus / TI-84 Plus Silver Edition
 
-This directory ports [lwIP-CE](../README.md) to the original monochrome
-**TI-84 Plus and TI-84 Plus Silver Edition** (Z80 at 15 MHz, 128 KiB RAM). The
-TI-84 Plus CE build in `../src` is unchanged; the TI-84 Plus build shares the
-same lwIP core, the `mem_buffer` allocator and the app-facing socket API
-(`lwIP.h`: `lwip_start`, `lwip_network_up`, `lwip_service_events`,
-`lwip_socket_*`).
+A small operating system for the original monochrome **TI-84 Plus and
+TI-84 Plus Silver Edition** (Z80 at 15 MHz, 128 KiB RAM) with the
+[lwIP](https://savannah.nongnu.org/projects/lwip/) TCP/IP stack, a USB
+network interface, a TLS 1.3 client, a text web browser and an SSH client.
+
+lwIP is used unchanged as a git submodule (`lwip/`, release 2.2.1; one fix is
+applied at build time, see `patches/`). The port started as a branch of
+[lwIP-CE](https://github.com/cagscalclabs/lwip-ce) (`ti84plus`), the lwIP
+library for the TI-84 Plus CE; it now has its own small socket layer and no
+longer depends on lwIP-CE.
+
+```
+git clone --recursive <this repository>      # or: git submodule update --init
+```
 
 Only the early hardware revisions with **128 KiB of RAM** (RAM pages 80h-87h)
 are supported. The later revisions with 48 KiB of RAM are not.
@@ -41,10 +49,9 @@ On Windows, enable Internet Connection Sharing for the new adapter.
 |------|-------|
 | Standalone OS (boot, LCD console, keypad, timer, power off) | works on hardware |
 | USB peripheral driver (Mentor MUSBFDRC), CDC-NCM function | works on hardware (Linux `cdc_ncm`) |
-| lwIP-CE core: ARP, IPv4, ICMP, UDP, TCP, DHCP, DNS | works on hardware |
-| lwIP-CE socket API (`lwIP.c`) | HTTP GET over the Internet works on hardware |
-| SNTP, plain WebSocket | work in emu84 |
-| TLS 1.3 client (`port/tls84.c`), TLS/WSS sockets | works in emu84 (see [TLS](#tls)) |
+| lwIP 2.2.1: ARP, IPv4, ICMP, UDP, TCP, DHCP, DNS, SNTP | works in emu84 (on hardware with lwIP-CE's copy of lwIP) |
+| Socket layer (`port/sock84.c`) | works in emu84 |
+| TLS 1.3 client (`port/tls84.c`) | works in emu84 (see [TLS](#tls)) |
 | Text web browser (HTTP and HTTPS, forms, search) | works in emu84 |
 | SSH client (password login, shell) | works in emu84 against OpenSSH 9.6 |
 | Power off with 2nd+ON | fixed (it woke up again at once); verified in emu84 |
@@ -67,15 +74,17 @@ make DEBUG=1              # debug build: USB/driver log on the LCD (or in emu84)
 make emu                  # the test emulator, build-84p/emu84
 ```
 
-The Makefile expects SDCC in `../../tools/sdcc-4.4.0/bin` and the other tools
-in `../../tools/local/bin`; override with `SDCC_BIN=` and `TOOLS=`.
+The Makefile expects SDCC in `../tools/sdcc-4.4.0/bin` and the other tools
+in `../tools/local/bin` (next to this repository); override with `SDCC_BIN=`
+and `TOOLS=`. `patch` applies `patches/*.patch` to a copy of the lwIP
+sources in the build directory.
 `tools/get-key.sh` downloads TI's public OS signing key `0A` (factored in 2009,
 distributed by KnightOS) into `keys/`; the key is not part of this repository.
 
-Every push to the `ti84plus` branch runs `.github/workflows/ti84plus.yml`:
-it builds the release and debug images for both models with the prebuilt
-SDCC 4.4.0, runs the crypto tests below and publishes the `.8xu` and `.rom`
-files as a release `ti84plus-build-N`.
+Every push to `main` runs `.github/workflows/build.yml`: it builds the
+release and debug images for both models with the prebuilt SDCC 4.4.0, runs
+the tests below and publishes the `.8xu` and `.rom` files as a release
+`build-N`.
 
 ### Memory layout and code banking
 
@@ -119,16 +128,47 @@ pages TI-OS uses.
 | Path | Contents |
 |------|----------|
 | `os/` | the OS: start-up, interrupts, far calls, LCD console, keypad (scanned in the timer interrupt), heap, USB driver (`usb.c`), CDC-NCM (`ncm.c`), menu and test console (`main.c`, `apps.c`, `demo.c`), text input (`input.c`), web browser (`browser.c`, HTML renderer `html.c`), SSH client and terminal (`ssh.c`, `term.c`) |
-| `port/` | lwIP-CE platform layer: `sys_arch`, NCM netif, USB Ethernet driver entry points, SNTP clock, TLS 1.3 client (`tls84.c`), X25519 key pair (`kx84.c`) |
+| `port/` | lwIP platform layer: `sys_arch`, NCM netif (`netif_ncm.c`), start-up and main-loop service (`net84.c`), sockets (`sock84.c`), clock (`time84.c`), TLS 1.3 client (`tls84.c`), X25519 key pair (`kx84.c`) |
 | `crypto/` | SHA-256/HMAC/HKDF, ChaCha20/Poly1305, AES-128/GCM, X25519, random numbers |
 | `include/` | `lwipopts.h`, `arch/cc.h` and small libc additions for SDCC |
 | `emu/` | `emu84`, a headless emulator with a USB host model |
-| `tools/` | `banker.py`, `mkrom.py`, profiling and helper scripts |
+| `tools/` | `banker.py`, `mkrom.py`, crypto code generators, profiling and helper scripts |
+| `lwip/` | lwIP (submodule) |
+| `patches/` | fixes applied to lwIP at build time |
 
-The shared lwIP-CE sources needed only small changes, all guarded by
-`LWIP_PORT_TI84P` or portable: `core/init.c` (heap size), `lwip-imports.h`
-(no usbdrvce table), `lwIP.c` (driver header), `app_config.h` (overridable
-TLS floor), `altcp_ws.c` (no variable-length array).
+`patches/tcp-persist-timer.patch`: when a zero-window probe carries the last
+unsent bytes and is acknowledged, lwIP 2.2.1 keeps the persist timer running
+with an empty send queue, and `tcp_slowtmr` dereferences `pcb->unsent`
+(assertion "persist ticking with empty send buffer"). The patch stops the
+timer when nothing is left to send. Seen with passt, which advertises a
+256-byte window.
+
+### Sockets
+
+`port/sock84.h` is the API of the applications (browser, SSH, console):
+
+```
+struct sock *s = sock_new(SOCK_TLS, 120000, event_cb);   /* or SOCK_TCP */
+sock_connect(s, "example.com", 443);   /* waits for DHCP, resolves, connects */
+...
+void event_cb(struct sock *s, uint8_t ev, uint8_t a, int8_t err)
+{
+    if (ev == SOCK_EV_STATE && a == SOCK_CONNECTED)
+        sock_write(s, request, len);       /* queued if TCP cannot take it */
+}
+...
+while ((n = sock_available(s)) != 0)       /* from the main loop */
+    n = sock_read(s, buf, n > sizeof(buf) ? sizeof(buf) : n);
+if (!sock_is_active(s))
+    sock_free(s);
+```
+
+Received data stays in lwIP's pbufs until it is read, and the TCP window
+opens as it is read, so there is no receive buffer to copy through. Events
+are delivered from `sock_poll()` (called by `net84_poll()` in the main
+loop), never from inside lwIP. Compared with lwIP-CE's socket layer this
+made a 337 KB page over HTTP load in 38 s instead of 49 s, over TLS in 81 s
+instead of 98 s, and the OS image is about 120 KB smaller.
 
 ## Applications
 
@@ -214,8 +254,8 @@ beginning is on the screen after about 15 s. `tests/html_test.c` runs the
 renderer on the host:
 
 ```
-gcc -O2 -DHTML_HOST -I os -o ../../tmp/html_test tests/html_test.c os/html.c
-../../tmp/html_test -i page.html
+gcc -O2 -DHTML_HOST -I os -o ../tmp/html_test tests/html_test.c os/html.c
+../tmp/html_test -i page.html
 ```
 
 The TLS handshake with https://example.com/ (real certificate chain) takes
@@ -269,8 +309,8 @@ The network console:
 | APPS | application menu |
 | 2nd, ON | power off (ON wakes the calculator) |
 
-Applications are linked into the OS and use the same `lwIP.h` API as on the
-CE; see `os/apps.c`, `os/browser.c` and `os/ssh.c`.
+Applications are linked into the OS and use the socket layer
+(`port/sock84.h`); see `os/apps.c`, `os/browser.c` and `os/ssh.c`.
 
 ## Testing with the emulator
 
@@ -316,7 +356,7 @@ tools/flash-calc.sh --debug     # versions, backup + ROM dump, send the OS, wait
 ```
 
 `flash-calc.sh` stores the backup (all variables and apps, `calc-info.txt`
-and a ROM dump) in `../../backup/DATE/` and stops if the boot code is 1.03 or
+and a ROM dump) in `../backup/DATE/` and stops if the boot code is 1.03 or
 newer. `ti84link check FILE.8xu` parses an upgrade file like TiLP does.
 
 To replace lwIP-84+ with a newer build, put the calculator into the boot
@@ -341,10 +381,10 @@ send the TI-OS upgrade from Texas Instruments when the calculator shows
 
 ## TLS
 
-`port/tls84.c` is a minimal TLS 1.3 client behind lwIP-CE's
-`altcp_tls_ce_*` entry points, so `LWIP_SOCKET_ALTCP_TLS` and
-`LWIP_SOCKET_ALTCP_WSS` sockets work through `lwIP.h` as on the CE. Only
-what is needed to talk to a server is implemented:
+`port/tls84.c` is a minimal TLS 1.3 client as an lwIP altcp layer:
+`tls84_new(host)` returns an `altcp_pcb` that is used like a TCP one
+(`SOCK_TLS` sockets do that). Only what is needed to talk to a server is
+implemented:
 
 - two cipher suites and one group, X25519. `TLS_AES_128_GCM_SHA256` is
   offered alone, because every TLS 1.3 server must implement it (RFC 8446
@@ -436,7 +476,7 @@ tables must be addressed through equates (`name = .`), not labels.
 bare Z80 (`tests/z80run.c`) and compares them with Python:
 
 ```
-gcc -O2 -o ../../tmp/z80run tests/z80run.c
+gcc -O2 -o ../tmp/z80run tests/z80run.c
 python3 tests/asm_test.py sha256 20
 python3 tests/asm_test.py poly1305 30
 python3 tests/asm_test.py aes 30
@@ -447,8 +487,8 @@ python3 tests/asm_test.py ghash 20
 with Python's `cryptography` package (`tests/aes_vectors.py`):
 
 ```
-gcc -O2 -I crypto -I tests -o ../../tmp/aes_test tests/aes_test.c crypto/aes.c
-../../tmp/aes_test
+gcc -O2 -I crypto -I tests -o ../tmp/aes_test tests/aes_test.c crypto/aes.c
+../tmp/aes_test
 ```
 
 `tests/crypto_test.c` checks the C code against the RFC test vectors on the host:

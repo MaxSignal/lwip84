@@ -1,0 +1,159 @@
+name: Build
+
+# Builds the TI-84 Plus / Plus SE operating system on every push to main,
+# runs the host-side tests, and publishes the signed OS upgrades (.8xu) and
+# flash images (.rom) as a GitHub release.
+#
+# Toolchain: SDCC 4.4.0 (prebuilt, from SourceForge; 4.5.0 miscompiles
+# variable shifts) and KnightOS mktiupgrade (built from source). The .8xu
+# files are signed with TI's public OS key 0A, fetched by tools/get-key.sh.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SDCC_VERSION: '4.4.0'
+  MKTIUPGRADE_REF: '6997263'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      SDCC_BIN: ${{ github.workspace }}/.tools/sdcc-4.4.0/bin
+      TOOLS: ${{ github.workspace }}/.tools/bin
+      TMPDIR: ${{ github.workspace }}/.tools/tmp
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Cache toolchain
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: .tools
+          key: ti84p-tools-sdcc${{ env.SDCC_VERSION }}-mktiupgrade${{ env.MKTIUPGRADE_REF }}
+
+      - name: Install toolchain
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y scdoc
+          mkdir -p .tools/bin
+          curl -fsSL -o sdcc.tar.bz2 \
+            "https://sourceforge.net/projects/sdcc/files/sdcc-linux-amd64/${SDCC_VERSION}/sdcc-${SDCC_VERSION}-amd64-unknown-linux2.5.tar.bz2/download"
+          tar xjf sdcc.tar.bz2 -C .tools
+          rm sdcc.tar.bz2
+          git clone -q https://github.com/KnightOS/mktiupgrade .tools/mktiupgrade-src
+          git -C .tools/mktiupgrade-src checkout -q "$MKTIUPGRADE_REF"
+          make -C .tools/mktiupgrade-src mktiupgrade
+          cp .tools/mktiupgrade-src/mktiupgrade .tools/bin/
+          rm -rf .tools/mktiupgrade-src
+
+      - name: Toolchain versions
+        run: |
+          mkdir -p "$TMPDIR"
+          "$SDCC_BIN/sdcc" --version | head -1
+          ls -l "$TOOLS"
+
+      - name: Fetch the OS signing key
+        run: tools/get-key.sh
+
+      - name: Build TI-84 Plus
+        run: make -j"$(nproc)"
+
+      - name: Build TI-84 Plus SE
+        run: make -j"$(nproc)" MODEL=84pse
+
+      - name: Build debug images
+        run: |
+          make -j"$(nproc)" DEBUG=1
+          make -j"$(nproc)" DEBUG=1 MODEL=84pse
+
+      - name: Build the emulator
+        run: make emu
+
+      - name: Crypto tests
+        run: |
+          gcc -O2 -I crypto -o "$TMPDIR/crypto_test" tests/crypto_test.c crypto/sha256.c crypto/chacha.c crypto/x25519.c
+          "$TMPDIR/crypto_test"
+          gcc -O2 -o "$TMPDIR/z80run" tests/z80run.c
+          Z80RUN="$TMPDIR/z80run" python3 tests/asm_test.py sha256 20
+          Z80RUN="$TMPDIR/z80run" python3 tests/asm_test.py poly1305 30
+          Z80RUN="$TMPDIR/z80run" python3 tests/asm_test.py aes 30
+          Z80RUN="$TMPDIR/z80run" python3 tests/asm_test.py ghash 20
+          gcc -O2 -I crypto -I tests -o "$TMPDIR/aes_test" tests/aes_test.c crypto/aes.c
+          "$TMPDIR/aes_test"
+
+      - name: HTML renderer tests
+        run: |
+          gcc -O2 -Wall -DHTML_HOST -I os -o "$TMPDIR/html_test" tests/html_test.c os/html.c
+          sh tests/html_check.sh "$TMPDIR/html_test"
+
+      - name: Collect files
+        run: |
+          set -e
+          mkdir -p dist
+          cp build-84p/lwip84.8xu             dist/lwip84-ti84plus.8xu
+          cp build-84p/lwip84.rom             dist/lwip84-ti84plus.rom
+          cp build-84pse/lwip84.8xu           dist/lwip84-ti84plusse.8xu
+          cp build-84pse/lwip84.rom           dist/lwip84-ti84plusse.rom
+          cp build-debug-84p/lwip84.8xu       dist/lwip84-ti84plus-debug.8xu
+          cp build-debug-84pse/lwip84.8xu     dist/lwip84-ti84plusse-debug.8xu
+          cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lwip84-${{ github.sha }}
+          path: dist/
+
+      - name: Create release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          tag="build-${GITHUB_RUN_NUMBER}"
+          short=$(git rev-parse --short HEAD)
+          prev=$(git tag --list 'build-*' --sort=-v:refname --merged HEAD | head -1)
+          {
+            echo "lwIP-84+ OS for the TI-84 Plus / Plus SE, built from ${short}."
+            echo
+            echo "| File | Contents |"
+            echo "|---|---|"
+            echo "| \`lwip84-ti84plus.8xu\` | OS upgrade for the TI-84 Plus |"
+            echo "| \`lwip84-ti84plusse.8xu\` | OS upgrade for the TI-84 Plus Silver Edition |"
+            echo "| \`*-debug.8xu\` | debug builds (USB/driver log on the LCD) |"
+            echo "| \`*.rom\` | flash images for emulators |"
+            echo
+            echo "Send the .8xu from boot mode (see README.md). It replaces TI-OS;"
+            echo "reinstall TI-OS the same way to go back."
+            echo
+            if [ -n "$prev" ]; then
+              echo "### Changes since ${prev}"
+              range="${prev}..HEAD"
+            else
+              echo "### Recent changes"
+              range="-20 HEAD"
+            fi
+            echo
+            git log --no-merges --format='- %s (%h)' $range
+          } > notes.md
+          cat notes.md
+          gh release create "$tag" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "lwIP-84+ build ${GITHUB_RUN_NUMBER} (${short})" \
+            --notes-file notes.md

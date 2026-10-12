@@ -17,7 +17,7 @@
 #include "input.h"
 #include "ui.h"
 #include "term.h"
-#include "lwIP.h"
+#include "sock84.h"
 #include "sha256.h"
 #include "chacha.h"
 #include "x25519.h"
@@ -37,7 +37,7 @@ enum {
 
 static const char version[] = "SSH-2.0-lwIP84_1.0";
 
-static struct lwip_socket *sock;
+static struct sock *sock;
 static uint8_t st, field, ctrl_next, kbd_int, got_newkeys, enc_out, enc_in;
 static uint16_t port, back;
 
@@ -164,7 +164,7 @@ static void fail(const char *why)
     }
     st = S_CLOSED;
     if (sock) {
-        lwip_socket_destroy(sock);
+        sock_free(sock);
         sock = NULL;
     }
 }
@@ -210,7 +210,7 @@ static void send_packet(void)
         poly1305_final(&m, p + 4 + body + pad);
     }
     seq_out++;
-    if (lwip_socket_write(sock, p, total) != LWIP_OK)
+    if (sock_write(sock, p, total))
         fail("send failed");
     free(p);
 }
@@ -584,24 +584,20 @@ static void rx_process(void)
     }
 }
 
-static void sock_event(struct lwip_socket *s, lwip_socket_event_type_t type,
-                       const void *data, void *arg)
+static void sock_event(struct sock *s, uint8_t ev, uint8_t a, int8_t err)
 {
-    (void)arg;
-    if (type == LWIP_SOCKET_EV_STATE_CHANGE) {
-        const lwip_socket_state_data_t *e = data;
-        if (e->current == LWIP_STATUS_CONNECTED && st == S_CONNECTING) {
-            lwip_socket_write(s, (const uint8_t *)version, sizeof(version) - 1);
-            lwip_socket_write(s, (const uint8_t *)"\r\n", 2);
+    if (ev == SOCK_EV_STATE) {
+        if (a == SOCK_CONNECTED && st == S_CONNECTING) {
+            sock_write(s, version, sizeof(version) - 1);
+            sock_write(s, "\r\n", 2);
             st = S_VERSION;
             strcpy(msg, kx_ready() ? "connected" : "making key");
-        } else if (e->current == LWIP_STATUS_RESOLVING) {
+        } else if (a == SOCK_RESOLVING) {
             strcpy(msg, "resolving");
         }
-    } else if (type == LWIP_SOCKET_EV_ERROR) {
-        const lwip_socket_error_data_t *e = data;
+    } else {
         char b[24];
-        snprintf(b, sizeof(b), "error %u/%u", e->component, e->err);
+        snprintf(b, sizeof(b), "error %u/%d", a, err);
         strcpy(msg, b);
     }
 }
@@ -612,7 +608,7 @@ static void sock_event(struct lwip_socket *s, lwip_socket_event_type_t type,
 static void cleanup(void)
 {
     if (sock) {
-        lwip_socket_destroy(sock);
+        sock_free(sock);
         sock = NULL;
     }
     free(rx);
@@ -642,8 +638,7 @@ static void ssh_connect(void)
     cleanup();
     rx = malloc(RXBUF);
     pb = malloc(PBUF);
-    /* no inactivity timeout: the key exchange and an idle shell are silent */
-    sock = lwip_socket_create_ex(LWIP_SOCKET_TCP, LWIP_NETIF_EXT, NULL, 0x7FFFFFFFUL, 2048u);
+    sock = sock_new(SOCK_TCP, 60000u, sock_event);
     if (!rx || !pb || !sock) {
         fail("no memory");
         return;
@@ -654,8 +649,7 @@ static void ssh_connect(void)
     local_window_used = 0;
     term_reset();
     kx_start();
-    lwip_socket_on_event(sock, LWIP_SOCKET_EVENTF_ALL, sock_event, NULL);
-    if (lwip_socket_connect(sock, host, port) != LWIP_OK) {
+    if (sock_connect(sock, host, port)) {
         fail("connect failed");
     } else {
         st = S_CONNECTING;
@@ -850,12 +844,12 @@ void ssh_poll(void)
         kx_run(100);                    /* the shared key pair must exist first */
     }
     while (sock && st != S_COMPUTE && (kx_ready() || st > S_KEXINIT)) {
-        size_t n = lwip_socket_available(sock);
+        size_t n = sock_available(sock);
         if (!n)
             break;
         if (discard) {
             uint8_t tmp[64];
-            n = lwip_socket_read(sock, tmp, n > discard ? (discard > 64 ? 64 : discard)
+            n = sock_read(sock, tmp, n > discard ? (discard > 64 ? 64 : discard)
                                                         : (n > 64 ? 64 : n));
             discard -= (uint16_t)n;
             continue;
@@ -864,11 +858,11 @@ void ssh_poll(void)
             n = RXBUF - rx_n;
         if (!n)
             break;
-        n = lwip_socket_read(sock, rx + rx_n, n);
+        n = sock_read(sock, rx + rx_n, n);
         rx_n += (uint16_t)n;
         rx_process();
     }
-    if (sock && !lwip_socket_is_active(sock) && st != S_CLOSED)
+    if (sock && !sock_is_active(sock) && st != S_CLOSED)
         fail(msg[0] && !memcmp(msg, "error", 5) ? msg : "connection lost");
     if ((term_dirty || st != S_OPEN) && (int32_t)(k_now_ms() - next_draw) >= 0) {
         next_draw = k_now_ms() + (st == S_OPEN ? 150 : 1000);

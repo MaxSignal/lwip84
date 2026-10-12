@@ -1,0 +1,20 @@
+--- a/src/core/tcp_in.c	2026-10-12 13:27:26.148374349 +0900
++++ b/src/core/tcp_in.c	2026-10-12 13:27:26.149253634 +0900
+@@ -1306,11 +1306,15 @@
+ 
+       pcb->polltmr = 0;
+ 
+-#if TCP_OVERSIZE
+       if (pcb->unsent == NULL) {
++#if TCP_OVERSIZE
+         pcb->unsent_oversize = 0;
+-      }
+ #endif /* TCP_OVERSIZE */
++        /* a zero-window probe may have carried the last unsent bytes: with
++         * nothing left to send the persist timer must stop (otherwise
++         * tcp_slowtmr asserts "persist ticking with empty send buffer") */
++        pcb->persist_backoff = 0;
++      }
+ 
+ #if LWIP_IPV6 && LWIP_ND6_TCP_REACHABILITY_HINTS
+       if (ip_current_is_v6()) {

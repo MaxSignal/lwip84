@@ -3,7 +3,7 @@
 # the Ubuntu packages are downloaded with apt-get and unpacked locally.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
-top=${TOOLS_DIR:-$here/../../../tools}
+top=${TOOLS_DIR:-$here/../../tools}
 debs=$top/debs; root=$top/tilibs; L=$root/usr/lib/x86_64-linux-gnu
 mkdir -p "$debs" "$root" "$top/local/bin"
 if [ ! -e "$L/libticalcs2.so" ]; then

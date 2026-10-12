@@ -1,4 +1,4 @@
-/* browser.c - a text web browser (HTTP/1.0 and HTTPS through lwIP.h).
+/* browser.c - a text web browser (HTTP/1.0 and HTTPS through port/sock84.c).
  *
  * The page is rendered by os/html.c while it arrives.  Links and form
  * fields carry inverted numbers; typing a number and ENTER follows the
@@ -18,7 +18,7 @@
 #include "input.h"
 #include "ui.h"
 #include "html.h"
-#include "lwIP.h"
+#include "sock84.h"
 #include "tls84.h"
 
 #define URL_MAX HTML_STR_MAX
@@ -36,7 +36,7 @@ enum { B_IDLE, B_LOADING };
 enum { E_NONE, E_URL, E_GO, E_FIELD, E_PICK };
 enum { H_STATUS, H_HEADER, H_BODY, H_CHUNK_SIZE, H_CHUNK_DATA, H_CHUNK_END, H_DONE };
 
-static struct lwip_socket *sock;
+static struct sock *sock;
 static uint8_t state, editing, redirects, hist_n, scrolled, page_open;
 static uint16_t top, pick_cur, pick_top, cur_idx;
 static uint32_t rx_bytes, last_draw, t_start;
@@ -193,7 +193,7 @@ static uint8_t is_search(const char *s)
 static void stop(void)
 {
     if (sock) {
-        lwip_socket_destroy(sock);
+        sock_free(sock);
         sock = NULL;
     }
     state = B_IDLE;
@@ -203,22 +203,20 @@ static void stop(void)
     }
 }
 
-static void sock_event(struct lwip_socket *s, lwip_socket_event_type_t type,
-                       const void *data, void *arg)
+static void sock_event(struct sock *s, uint8_t ev, uint8_t a, int8_t err)
 {
-    (void)arg;
-    if (type == LWIP_SOCKET_EV_STATE_CHANGE) {
-        const lwip_socket_state_data_t *st = data;
-        if (st->current == LWIP_STATUS_CONNECTED)
-            lwip_socket_write(s, (const uint8_t *)request, strlen(request));
-        else if (st->current == LWIP_STATUS_CONNECTING)
+    if (ev == SOCK_EV_STATE) {
+        if (a == SOCK_CONNECTED)
+            sock_write(s, request, (uint16_t)strlen(request));
+        else if (a == SOCK_CONNECTING)
             strcpy(msg, "connecting");
-        else if (st->current == LWIP_STATUS_RESOLVING)
+        else if (a == SOCK_RESOLVING)
             strcpy(msg, "resolving");
-    } else if (type == LWIP_SOCKET_EV_ERROR) {
-        const lwip_socket_error_data_t *e = data;
-        snprintf(msg, sizeof(msg), "error %u/%u %s", e->component, e->err,
-                 e->component == LWIP_SOCKET_ERR_COMP_TLS ? tls84_last_error : "");
+        else if (a == SOCK_WAITING_NET)
+            strcpy(msg, "waiting for network");
+    } else {
+        snprintf(msg, sizeof(msg), "error %u/%d %s", a, err,
+                 a == SOCK_ERR_TLS ? tls84_last_error : "");
     }
 }
 
@@ -260,13 +258,11 @@ static void load(const char *u, const char *body, const char *ref)
                                 "Content-Length: %u\r\n\r\n%s", (uint16_t)strlen(body), body);
     else
         snprintf(request + n, sizeof(request) - n, "\r\n");
-    sock = lwip_socket_create_ex(tls ? LWIP_SOCKET_ALTCP_TLS : LWIP_SOCKET_TCP,
-                                 LWIP_NETIF_EXT, NULL, tls ? 120000u : 30000u, 2048u);
+    sock = sock_new(tls ? SOCK_TLS : SOCK_TCP, tls ? 120000u : 30000u, sock_event);
     if (!sock) {
         strcpy(msg, "no memory");
         return;
     }
-    lwip_socket_on_event(sock, LWIP_SOCKET_EVENTF_ALL, sock_event, NULL);
     hstate = H_STATUS;
     hline_n = 0;
     chunked = 0;
@@ -274,7 +270,7 @@ static void load(const char *u, const char *body, const char *ref)
     http_status = 0;
     location[0] = 0;
     rx_bytes = 0;
-    if (lwip_socket_connect(sock, host, port) != LWIP_OK) {
+    if (sock_connect(sock, host, port)) {
         stop();
         strcpy(msg, "connect failed");
         return;
@@ -840,8 +836,8 @@ void browser_poll(void)
     if (!bm || state != B_LOADING || !sock)
         return;
     buf = bm->rx;
-    while ((n = lwip_socket_available(sock)) != 0) {
-        n = lwip_socket_read(sock, buf, n > sizeof(bm->rx) ? sizeof(bm->rx) : n);
+    while ((n = sock_available(sock)) != 0) {
+        n = sock_read(sock, buf, n > sizeof(bm->rx) ? sizeof(bm->rx) : n);
         if (!n)
             break;
         if (!rx_bytes) {
@@ -862,7 +858,7 @@ void browser_poll(void)
                    k_now_ms() - t_start);
         draw();
         return;
-    } else if (hstate == H_DONE || !lwip_socket_is_active(sock)) {
+    } else if (hstate == H_DONE || !sock_is_active(sock)) {
         uint8_t got = hstate != H_STATUS;
         stop();
         if (do_redirect) {

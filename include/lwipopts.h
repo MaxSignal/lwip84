@@ -3,9 +3,7 @@
 #define LWIP_LWIPOPTS_H
 
 #include <stdint.h>
-#include "lwip/sntp_time.h"
-
-#define LWIP_PORT_TI84P 1
+#include "time84.h"
 
 #define NO_SYS 1
 #define LWIP_TIMERS 1
@@ -21,7 +19,7 @@
 #define LWIP_NETIF_HOSTNAME 1
 #define LWIP_NETIF_STATUS_CALLBACK 1
 #define LWIP_NETIF_LINK_CALLBACK 1
-#define LWIP_NETIF_EXT_STATUS_CALLBACK 1
+#define LWIP_NETIF_EXT_STATUS_CALLBACK 0
 #define LWIP_NETIF_REMOVE_CALLBACK 1
 #define LWIP_HAVE_LOOPIF 0
 #define LWIP_NETIF_LOOPBACK 0
@@ -32,7 +30,7 @@
 #define LWIP_UDPLITE 0
 #define LWIP_TCP 1
 #define LWIP_ALTCP 1
-#define LWIP_ALTCP_TLS 0
+#define LWIP_ALTCP_TLS 0                /* port/tls84.c is used directly */
 #define LWIP_IGMP 0
 #define LWIP_DHCP 1
 #define LWIP_DHCP_PROVIDE_DNS_SERVERS 1
@@ -56,45 +54,27 @@
 #define LWIP_STATS 0
 #define LWIP_STATS_DISPLAY 0
 
-/* memory: lwIP-CE's mem_buffer allocator on top of the OS heap */
-#define MEM_USE_POOLS 0
-#define MEM_CUSTOM_ALLOCATOR 1
-#define MEMP_MEM_MALLOC 1
-#define MEM_CUSTOM_FREE mem_buffer_custom_free
-#define MEM_CUSTOM_MALLOC mem_buffer_custom_malloc
-#define MEM_CUSTOM_CALLOC mem_buffer_custom_calloc
+/* memory: fixed pools for pcbs, segments and received frames (fast, no
+ * fragmentation); lwIP's heap (PBUF_RAM, e.g. data being sent) is the OS
+ * heap */
+#define MEM_LIBC_MALLOC 1
+#define MEMP_MEM_MALLOC 0
 #define MEM_ALIGNMENT 1U
-#define MAX_HEAP_USAGE (12u * 1024u)
-#define LWIP_PBUF_POOL_BYTES (3u * 1024u)
-#define MEM_SIZE (MAX_HEAP_USAGE - LWIP_PBUF_POOL_BYTES)
 
 #define MEMP_NUM_PBUF 6
 #define MEMP_NUM_RAW_PCB 1
 #define MEMP_NUM_UDP_PCB 4
 #define MEMP_NUM_TCP_PCB 4
 #define MEMP_NUM_TCP_PCB_LISTEN 2
-#define MEMP_NUM_TCP_SEG 12
-#define MEMP_NUM_SYS_TIMEOUT 12
+#define MEMP_NUM_TCP_SEG 16
+#define MEMP_NUM_ALTCP_PCB 4
+#define MEMP_NUM_ARP_QUEUE 4
 #define MEMP_NUM_NETBUF 0
 #define MEMP_NUM_NETCONN 0
 #define MEMP_NUM_TCPIP_MSG_API 0
 #define MEMP_NUM_TCPIP_MSG_INPKT 0
 #define PBUF_POOL_BUFSIZE 256
-#define PBUF_POOL_SIZE (LWIP_PBUF_POOL_BYTES / PBUF_POOL_BUFSIZE)
-#define LWIP_MEMPOOL_SMALL_BLOCK 64
-#define LWIP_MEMPOOL_SMALL_COUNT 16
-#define LWIP_MEMPOOL_MEDIUM_BLOCK PBUF_POOL_BUFSIZE
-#define LWIP_MEMPOOL_MEDIUM_COUNT PBUF_POOL_SIZE
-#define LWIP_MEMPOOL_LARGE_BLOCK 512
-#define LWIP_MEMPOOL_LARGE_COUNT 2
-#define LWIP_MEMPOOL_PBUF_BLOCK 320
-#define LWIP_MEMPOOL_PBUF_COUNT (LWIP_PBUF_POOL_BYTES / LWIP_MEMPOOL_PBUF_BLOCK)
-#define LWIP_MEMBUF_GROW_STEP 128
-#define LWIP_MEMBUF_SHRINK_STEP 128
-#define LWIP_MEMBUF_GROW_THRESHOLD 85
-#define LWIP_MEMBUF_SHRINK_THRESHOLD 30
-#define LWIP_MEMBUF_SHRINK_HOLD 1
-#define LWIP_MEM_PRESSURE_CLEAR_PCT 65
+#define PBUF_POOL_SIZE 12
 
 #define TCP_TTL 64
 #define TCP_QUEUE_OOSEQ 0
@@ -119,7 +99,7 @@
 #define CHECKSUM_CHECK_UDP 0
 #define CHECKSUM_CHECK_ICMP 0
 #define LWIP_RAND() sys_rand32()
-#define SNTP_SET_SYSTEM_TIME(sec) lwip_sntp_set_time((uint32_t)(sec))
+#define SNTP_SET_SYSTEM_TIME(sec) time84_set((uint32_t)(sec))
 #define SNTP_SERVER_DNS LWIP_DNS
 #define SNTP_SERVER_ADDRESS "pool.ntp.org"
 #define SNTP_STARTUP_DELAY 0
