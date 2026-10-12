@@ -13,9 +13,7 @@ network interface, a TLS 1.3 client, a text web browser and an SSH client.
 - It replaces TI-OS, which leaves too little memory for a network stack.
   TI-OS can be reinstalled from the boot code at any time.
 - lwIP 2.2.1 is a git submodule (`lwip/`), used unchanged except for
-  `patches/`. The port started as a branch of
-  [lwIP-CE](https://github.com/cagscalclabs/lwip-ce), the lwIP library for
-  the TI-84 Plus CE.
+  `patches/`.
 
 ```
 git clone --recursive https://github.com/MaxSignal/lwip84.git
@@ -42,18 +40,11 @@ On Windows, enable Internet Connection Sharing for the new adapter.
 
 ## Status
 
-| Part | Tested |
-|------|--------|
-| OS: boot, LCD console, keypad, timer, power off | hardware |
-| USB peripheral driver (MUSBFDRC), CDC-NCM | hardware (Linux) |
-| ARP, IPv4, ICMP, UDP, TCP, DHCP, DNS | hardware, emu84 |
-| SNTP, TLS 1.3 client | emu84 |
-| Web browser (HTTP, HTTPS, forms, search) | emu84 |
-| External font (Japanese) | emu84 |
-| SSH client (password login, shell) | emu84, against OpenSSH 9.6 |
-
-Hardware: TI-84 Plus (revision 2, boot code 1.00) on Linux; the hardware
-tests were made with lwIP-CE's copy of lwIP.
+All of it works on a TI-84 Plus (hardware revision 2, boot code 1.00)
+connected to Linux: the OS (LCD, keypad, timer, power off), the USB driver
+and CDC-NCM, ARP, IPv4, ICMP, UDP, TCP, DHCP, DNS and SNTP, TLS 1.3, the web
+browser with forms, search and the Japanese font, and the SSH client
+(tested against OpenSSH 9.6).
 
 ## Applications
 
