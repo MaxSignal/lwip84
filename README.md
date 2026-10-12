@@ -295,7 +295,7 @@ gcc -O2 -o ../tmp/z80run tests/z80run.c
 python3 tests/asm_test.py aes 30           # also sha256, poly1305, ghash: Z80 code vs Python
 gcc -O2 -I crypto -I tests -o ../tmp/aes_test tests/aes_test.c crypto/aes.c && ../tmp/aes_test
 gcc -O2 -I crypto -o ../tmp/crypto_test tests/crypto_test.c crypto/sha256.c crypto/chacha.c crypto/x25519.c && ../tmp/crypto_test
-gcc -O2 -DHTML_HOST -I os -o ../tmp/html_test tests/html_test.c os/html.c && sh tests/html_check.sh ../tmp/html_test
+gcc -O2 -DHTML_HOST -I os -o ../tmp/html_test tests/html_test.c os/html.c os/font.c && sh tests/html_check.sh ../tmp/html_test
 ```
 
 `html_test -i FILE.html` shows how a saved page is rendered.

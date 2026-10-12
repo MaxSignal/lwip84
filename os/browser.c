@@ -586,19 +586,18 @@ static void draw_pick(void)
 {
     struct html_item *it = &bm->it;
     char label[COLS + 1];
-    uint8_t r, i;
+    uint8_t r, y = 8, h;
     ui_clear();
     ui_status("choose: ENTER  CLEAR");
     for (r = 0; r < ROWS && pick_top + r < it->nopt; r++) {
         html_get_option(it, (uint8_t)(pick_top + r), NULL, label);
-        if (pick_top + r == pick_cur) {
-            uint8_t n = (uint8_t)strlen(label);
-            memset(label + n, ' ', COLS - n);
-            label[COLS] = 0;
-            for (i = 0; i < COLS; i++)
-                label[i] |= 0x80;
-        }
-        ui_text(r, label);
+        h = ui_row_height(label);
+        if (y + h > 64)
+            break;
+        ui_text_at(y, label, h);
+        if (pick_top + r == pick_cur)
+            lcd_invert_rect(0, y, 96, h);
+        y += h;
     }
     lcd_update();
 }
@@ -626,9 +625,17 @@ static void draw(void)
     }
     ui_status(buf);
     buf[COLS] = 0;
-    for (r = 0; r < ROWS && top + r < html_lines; r++) {
-        html_get_line(top + r, buf);
-        ui_text(r, buf);
+    {
+        /* rows with font glyphs are 8 pixels high, others 6 */
+        uint8_t y = 8, h, bottom = editing ? 56 : 64;
+        for (r = 0; top + r < html_lines; r++) {
+            html_get_line(top + r, buf);
+            h = ui_row_height(buf);
+            if (y + h > bottom)
+                break;
+            ui_text_at(y, buf, h);
+            y += h;
+        }
     }
     if (!html_lines && !editing && state == B_IDLE) {
         ui_text(1, "Y=    URL or search");

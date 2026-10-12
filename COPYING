@@ -27,3 +27,6 @@ OF SUCH DAMAGE.
 
 lwip/ is lwIP (BSD license, see lwip/COPYING). emu/third_party/z80.h is from
 floooh/chips (zlib license).
+
+fonts/k6x8/ is the k6x8 font by Num Kadoma (free: use, copy and distribute
+with or without modification, see fonts/k6x8/k6x8.txt).

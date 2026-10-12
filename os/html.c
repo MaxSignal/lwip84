@@ -11,12 +11,14 @@
  * Output: lines of HTML_COLS characters in extended RAM.  Links and form
  * fields are items (struct html_item) numbered in page order; the number
  * is drawn inverted (bit 7) in front of the link text or the field.
- * Text is reduced to ASCII: entities and UTF-8 are decoded, accented
- * letters lose their accents, other characters become '?'.
+ * Text is reduced to ASCII where it can be: entities and UTF-8 are decoded,
+ * accented letters lose their accents; other characters are shown with the
+ * external font (os/font.c, two cells each) or become '?'.
  */
 #include <string.h>
 #include <stdlib.h>
 #include "html.h"
+#include "font.h"
 
 #define COLS HTML_COLS
 #define ABUF 640
@@ -177,7 +179,7 @@ static uint16_t u_cp;
 /* layout */
 static uint8_t col, lmargin, word_n, pending_space, blank, indent, in_pre, upper;
 static uint8_t sink, hide, sd, sover, link_pending, cell_sep, row_cells, last_th;
-static uint8_t ld, bq, ddn, ol_mask, in_button, title_cap, cap_n;
+static uint8_t ld, bq, ddn, ol_mask, in_button, title_cap, cap_n, title_sp, cap_sp;
 static uint8_t olnum[8];
 static char bullet[5];
 
@@ -393,11 +395,15 @@ static void flush_word(void)
     pending_space = 0;
     blank = 0;
     while (i < word_n) {
-        if (col == COLS) {
+        /* a font glyph's two cells stay on one line */
+        uint8_t pair = FONT_IS_LEAD(word[i]) && i + 1 < word_n;
+        if (col == COLS || (pair && col == COLS - 1)) {
             emit_line();
             line_start();
         }
         line[col++] = word[i++];
+        if (pair)
+            line[col++] = word[i++];
     }
     word_n = 0;
 }
@@ -528,16 +534,57 @@ static void emit_ascii(char c)
         n = (uint8_t)strlen(html_title);
         if (is_space(c))
             c = ' ';
-        if (n < COLS && !(c == ' ' && (!n || html_title[n - 1] == ' '))) {
+        if (n < COLS && !(c == ' ' && (!n || title_sp))) {
             html_title[n] = c;
             html_title[n + 1] = 0;
+            title_sp = c == ' ';
         }
         break;
     case SK_CAP:
         if (is_space(c))
             c = ' ';
-        if (cap_n < CAP_MAX && !(c == ' ' && (!cap_n || hs->cap[cap_n - 1] == ' ')))
+        if (cap_n < CAP_MAX && !(c == ' ' && (!cap_n || cap_sp))) {
             hs->cap[cap_n++] = c;
+            cap_sp = c == ' ';
+        }
+        break;
+    }
+}
+
+/* a glyph of the external font: two cells, a line may break before and
+ * after it (no spaces between CJK characters) */
+static void emit_wide(uint16_t g)
+{
+    uint8_t n;
+    switch (sink) {
+    case SK_TEXT:
+        if (cell_sep)
+            cell_separator();
+        if (link_pending)
+            start_link();
+        if (word_n && !(word[word_n - 1] & 0x80))
+            flush_word();               /* keep only a link number in front */
+        if (word_n + 2 > COLS)
+            flush_word();
+        word[word_n++] = FONT_LEAD(g);
+        word[word_n++] = FONT_TRAIL(g);
+        flush_word();
+        break;
+    case SK_TITLE:
+        n = (uint8_t)strlen(html_title);
+        if (n + 2 <= COLS) {
+            html_title[n] = FONT_LEAD(g);
+            html_title[n + 1] = FONT_TRAIL(g);
+            html_title[n + 2] = 0;
+            title_sp = 0;
+        }
+        break;
+    case SK_CAP:
+        if (cap_n + 2 <= CAP_MAX) {
+            hs->cap[cap_n++] = FONT_LEAD(g);
+            hs->cap[cap_n++] = FONT_TRAIL(g);
+            cap_sp = 0;
+        }
         break;
     }
 }
@@ -561,6 +608,8 @@ static void emit_cp(uint16_t cp)
         }
         return;
     }
+    if (cp > 0x3000 && cp < 0xFEFF)          /* CJK and the like: the font */
+        goto font;
     if (cp >= 0xFF01 && cp <= 0xFF5E) {     /* full-width ASCII */
         unk_run = 0;
         emit_ascii((char)(cp - 0xFEE0));
@@ -573,6 +622,15 @@ static void emit_cp(uint16_t cp)
             for (s = rep; *s; s++)
                 emit_ascii(*s);
             unk_run = 0;
+            return;
+        }
+    }
+font:
+    {
+        uint16_t g = font_find(cp);
+        if (g != FONT_NONE) {
+            unk_run = 0;
+            emit_wide(g);
             return;
         }
     }
@@ -633,7 +691,59 @@ static void update_sink(void)
 /* ------------------------------------------------------------------ */
 /* form fields                                                         */
 
-/* ASCII picture of a field's value, width characters */
+/* length of s (n cells) without trailing spaces; a font glyph's trail byte
+ * may look like a space */
+static uint8_t cells_trim(const char *s, uint8_t n)
+{
+    uint8_t i = 0, end = 0;
+    while (i < n) {
+        if (FONT_IS_LEAD(s[i]) && i + 1 < n) {
+            i += 2;
+            end = i;
+        } else if (s[i++] != ' ') {
+            end = i;
+        }
+    }
+    return end;
+}
+
+/* cells for a raw UTF-8 string (field values, button labels), at most w */
+static uint8_t utf8_cells(const char *v, char *out, uint8_t w)
+{
+    uint8_t i = 0;
+    while (*v && i < w) {
+        uint8_t c = (uint8_t)*v++, k;
+        uint16_t cp, g;
+        if (c < 0x80) {
+            out[i++] = (char)c;
+            continue;
+        }
+        if ((c & 0xC0) == 0x80)
+            continue;
+        k = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : 1;
+        cp = c & (k == 2 ? 0x0F : 0x1F);
+        while (k-- && ((uint8_t)*v & 0xC0) == 0x80)
+            cp = (uint16_t)(cp << 6 | (*v++ & 0x3F));
+        if (c >= 0xF0)
+            cp = 0xFFFD;
+        if (cp >= 0xA0 && cp < 0x180 && latin_bk[cp - 0xA0]) {
+            out[i++] = latin_bk[cp - 0xA0];
+            continue;
+        }
+        g = font_find(cp);
+        if (g == FONT_NONE) {
+            out[i++] = '?';
+        } else if (i + 2 <= w) {
+            out[i++] = FONT_LEAD(g);
+            out[i++] = FONT_TRAIL(g);
+        } else {
+            break;
+        }
+    }
+    return i;
+}
+
+/* picture of a field's value, width cells */
 static void value_area(const struct html_item *it, const char *v, char *out)
 {
     uint8_t i = 0, w = it->width;
@@ -650,16 +760,19 @@ static void value_area(const struct html_item *it, const char *v, char *out)
             v++;
         }
         break;
-    default:
+    case IT_SELECT:
+        /* the label is page text already */
         while (*v && i < w) {
-            uint8_t c = (uint8_t)*v++;
-            if (c >= 0x80) {
-                if ((c & 0xC0) == 0x80)
-                    continue;
-                c = '?';
+            if (FONT_IS_LEAD(*v)) {
+                if (!v[1] || i + 2 > w)
+                    break;
+                out[i++] = *v++;
             }
-            out[i++] = (char)c;
+            out[i++] = *v++;
         }
+        break;
+    default:
+        i = utf8_cells(v, out, w);
     }
     while (i < w)
         out[i++] = it->kind == IT_SELECT || it->kind == IT_SUBMIT ? ' ' : '_';
@@ -903,8 +1016,7 @@ static void option_end(void)
     if (!opt_open)
         return;
     opt_open = 0;
-    while (cap_n && hs->cap[cap_n - 1] == ' ')
-        cap_n--;
+    cap_n = cells_trim(hs->cap, cap_n);
     hs->cap[cap_n] = 0;
     off = html_add_str(opt_has_val ? hs->oval : hs->cap);
     if (off == HTML_NONE || html_add_str(hs->cap) == HTML_NONE || hs->sel_item.nopt == 255) {
@@ -1319,9 +1431,7 @@ static void raw_end(void)
     raw_id = 0;
     update_sink();
     if (id == T_TITLE) {
-        uint8_t n = (uint8_t)strlen(html_title);
-        while (n && html_title[n - 1] == ' ')
-            html_title[--n] = 0;
+        html_title[cells_trim(html_title, (uint8_t)strlen(html_title))] = 0;
         title_cap = 0;
     } else if (id == T_TEXTAREA) {
         struct html_item *it = &hs->ta_item;

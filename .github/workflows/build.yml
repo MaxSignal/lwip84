@@ -99,7 +99,7 @@ jobs:
 
       - name: HTML renderer tests
         run: |
-          gcc -O2 -Wall -DHTML_HOST -I os -o "$TMPDIR/html_test" tests/html_test.c os/html.c
+          gcc -O2 -Wall -DHTML_HOST -I os -o "$TMPDIR/html_test" tests/html_test.c os/html.c os/font.c
           sh tests/html_check.sh "$TMPDIR/html_test"
 
       - name: Collect files

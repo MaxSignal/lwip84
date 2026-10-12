@@ -6,7 +6,10 @@ of the linear address) is flash page N.  Anything else that carries data
 (e.g. initialized RAM) is an error, because the OS copies initializers
 from page 0 itself.
 
-Usage: mkrom.py in.ihx out.rom [--pages 64]
+Usage: mkrom.py in.ihx out.rom [--pages 64] [--data PAGE:FILE]... [--pagelist OUT]
+
+--data puts a file (a font) on flash pages from PAGE on; --pagelist writes
+the pages that hold anything, for mktiupgrade.
 """
 import sys
 
@@ -14,9 +17,19 @@ import sys
 def main():
     args = sys.argv[1:]
     pages = 64
+    extra, pagelist = [], None
     if '--pages' in args:
         i = args.index('--pages')
         pages = int(args[i + 1], 0)
+        del args[i:i + 2]
+    while '--data' in args:
+        i = args.index('--data')
+        page, fn = args[i + 1].split(':', 1)
+        extra.append((int(page, 16), fn))
+        del args[i:i + 2]
+    if '--pagelist' in args:
+        i = args.index('--pagelist')
+        pagelist = args[i + 1]
         del args[i:i + 2]
     src, dst = args
     rom = bytearray(b'\xff' * (pages * 0x4000))
@@ -50,9 +63,23 @@ def main():
                 sys.exit('mkrom: page %02X beyond flash size' % (fa >> 14))
             rom[fa] = v
             used[fa >> 14] = used.get(fa >> 14, 0) + 1
+    for page, fn in extra:
+        blob = open(fn, 'rb').read()
+        fa = page * 0x4000
+        if fa + len(blob) > len(rom):
+            sys.exit('mkrom: %s does not fit from page %02X' % (fn, page))
+        for i in range(0, len(blob), 0x4000):
+            p = (fa + i) >> 14
+            if p in used:
+                sys.exit('mkrom: %s overlaps page %02X' % (fn, p))
+        for i in range((len(blob) + 0x3FFF) >> 14):
+            used[page + i] = min(0x4000, len(blob) - i * 0x4000)
+        rom[fa:fa + len(blob)] = blob
     open(dst, 'wb').write(rom)
     for p in sorted(used):
         print('page %02X: %5d bytes used' % (p, used[p]))
+    if pagelist:
+        open(pagelist, 'w').write(' '.join('%02X' % p for p in sorted(used)) + '\n')
 
 
 if __name__ == '__main__':

@@ -22,15 +22,16 @@ SDCCLIB = $(abspath $(SDCC_BIN)/../share/sdcc/lib/z80)
 # FIXED is the page of the Z80 field arithmetic and its tables (fe_z80.s).
 # The boot code forbids code execution on flash pages 08h..29h (84+) or
 # 08h..69h (84+SE), so banked code goes to pages 01-07 and to the pages
-# TI-OS itself uses at the top of flash.
+# TI-OS itself uses at the top of flash.  Page 3A (7A) is left out: the boot
+# code keeps the OS header and signature at its start.
 MODEL ?= 84p
 ifeq ($(MODEL),84pse)
-BANKS   = 1-7,73-7A
+BANKS   = 1-7,73-79
 FIXED   = 7B
 PAGES   = 128
 DEVICE  = TI-84+SE
 else
-BANKS   = 1-7,33-3A
+BANKS   = 1-7,33-39
 FIXED   = 3B
 PAGES   = 64
 DEVICE  = TI-84+
@@ -52,7 +53,7 @@ CFLAGS  = -mz80 --std-sdcc11 --opt-code-size --constseg CONST $(DEFS) \
 COMMON_C = os/isr.c os/far.c os/usb.c os/kbd.c
 COMMON_S = os/crt0.s os/farcall.s os/usb_ll.s
 # everything else is placed in flash pages 1.. by tools/banker.py
-BANKED_C = os/main.c os/demo.c os/apps.c os/input.c os/ui.c os/browser.c os/html.c os/ssh.c os/term.c os/lcd.c os/fmt.c os/usb_ctl.c os/ncm.c os/heap.c \
+BANKED_C = os/main.c os/demo.c os/apps.c os/input.c os/ui.c os/browser.c os/html.c os/font.c os/ssh.c os/term.c os/lcd.c os/fmt.c os/usb_ctl.c os/ncm.c os/heap.c \
            port/sys_arch.c port/time84.c port/netif_ncm.c port/net84.c port/sock84.c \
            port/tls84.c port/kx84.c \
            crypto/sha256.c crypto/chacha.c crypto/aes.c crypto/x25519.c crypto/rng.c \
@@ -121,15 +122,25 @@ $(B)/lwip84.ihx: $(B)/banked.stamp
 	    $$(cat ../banks.lnk) \
 	    -k $(SDCCLIB) -l z80 ../lwip84.ihx crt0.rel $$(ls *.rel | grep -v '^crt0.rel$$')
 
-$(B)/lwip84.rom: $(B)/lwip84.ihx tools/mkrom.py
-	$(PY) tools/mkrom.py --pages $(PAGES) $< $@
+# external font on the flash data pages (os/font.h); FONT= for none
+FONT ?= fonts/k6x8/k6x8_gothic.bdf
+ifneq ($(FONT),)
+FONT_BIN = $(B)/font.bin
+FONT_ARG = --data 08:$(FONT_BIN)
+$(FONT_BIN): $(FONT) tools/mkfont84.py
+	@mkdir -p $(B)
+	$(PY) tools/mkfont84.py $< $@
+endif
+
+$(B)/lwip84.rom: $(B)/lwip84.ihx tools/mkrom.py $(FONT_BIN)
+	$(PY) tools/mkrom.py --pages $(PAGES) --pagelist $(B)/pages.txt $(FONT_ARG) $< $@
 	@grep -E "^_(CODE|CONST|HOME|GSINIT|GSFINAL|INITIALIZER|DATA|BSS|INITIALIZED) " $(B)/lwip84.map | sort -u
 
 # OS upgrade for the calculator, signed with TI's public OS key 0A
 # (tools/get-key.sh); send it with TiLP or TI Connect.
 KEY ?= keys/0A.key
 $(B)/lwip84.8xu: $(B)/lwip84.rom $(KEY)
-	mktiupgrade -p -k $(KEY) -d $(DEVICE) -v 1.0 $< $@ 00 $$(sed -n 's/^bank \([0-9A-F]*\):.*/\1/p' $(B)/banks.txt)
+	mktiupgrade -p -k $(KEY) -d $(DEVICE) -v 1.0 $< $@ $$(cat $(B)/pages.txt)
 
 $(KEY):
 	tools/get-key.sh

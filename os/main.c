@@ -26,6 +26,7 @@
 #include "input.h"
 #include "ui.h"
 #include "rng.h"
+#include "font.h"
 
 uint8_t browser_enter(void);
 uint8_t browser_key(uint8_t k);
@@ -124,7 +125,7 @@ static void show_info(void)
     if (net84_netif)
         con_printf("gw %s\n", ip4addr_ntoa(netif_ip4_gw(net84_netif)));
     con_printf("dns %s\n", ipaddr_ntoa(dns_getserver(0)));
-    con_printf("heap %u free\n", heap_free_bytes());
+    con_printf("heap %u free, font %s\n", heap_free_bytes(), font_ok ? "ok" : "none");
 }
 
 static const char *gateway_str(void)
@@ -218,6 +219,9 @@ void main(void)
     con_clear();
     con_puts("lwIP-84+ " __DATE__ "\n");
     con_flush();
+    font_init();
+    if (!font_ok)
+        con_puts("no font: non-ASCII text as ?\n");
     net84_init();
     dbg_printf("lwip up, heap %u%s\n", heap_free_bytes(), k_is_emulator ? " (emu)" : "");
     if (usb_last_error)
