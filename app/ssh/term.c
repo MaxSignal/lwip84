@@ -13,6 +13,7 @@
 #include "kernel.h"
 #include "ui.h"
 #include "font.h"
+#include "narrow.h"
 #include "term.h"
 
 #define W TERM_COLS
@@ -157,6 +158,23 @@ static void put_cp(uint16_t cp)
     }
     if (cp >= 0x0300 && cp <= 0x036F)   /* combining marks: nothing */
         return;
+    if (cp >= 0x0386 && cp <= 0x045F) {
+        /* Cyrillic and Greek: a 4x6 glyph in one column (narrow.h) */
+        uint8_t lo = 0, hi = NARROW_N, mid;
+        while (lo < hi) {
+            mid = (lo + hi) >> 1;
+            if (narrow_cp_bk[mid] == cp) {
+                put((char)narrow_to_bk[mid]);
+                return;
+            }
+            if (narrow_cp_bk[mid] < cp)
+                lo = mid + 1;
+            else
+                hi = mid;
+        }
+        put('?');
+        return;
+    }
     if (is_wide(cp)) {
         uint16_t g = font_find(cp);
         if (g != FONT_NONE) {
@@ -344,6 +362,37 @@ void term_write(const uint8_t *s, uint16_t n)
 }
 
 /* back = 0: live screen; otherwise show `back` lines of scrollback */
+/* a row: font glyphs and ASCII by ui_text_at, then the 4x6 glyphs of the
+ * cells A0h-FEh (Cyrillic, Greek) */
+static void draw_row(uint8_t y, char *row)
+{
+    uint8_t narrow[W], i, k, ya = RH >= 8 ? y + 2 : y;
+    for (i = 0; i < W; i++) {
+        uint8_t c = (uint8_t)row[i];
+        narrow[i] = 0;
+        if (FONT_IS_LEAD(c) && i + 1 < W) {
+            i++;
+            narrow[i] = 0;
+        } else if (c >= 0xA0 && c < 0xFF) {
+            narrow[i] = c;
+            row[i] = ' ';
+        }
+    }
+    ui_text_at(y, row, RH);
+    for (i = 0; i < W; i++) {
+        const uint8_t *g;
+        uint8_t *p;
+        if (!narrow[i])
+            continue;
+        g = narrow_bk[narrow[i] - 0xA0];
+        p = lcd_buf + (uint16_t)ya * 12 + (i >> 1);
+        for (k = 0; k < 6 && ya + k < 64; k++, p += 12) {
+            uint8_t v = k & 1 ? g[k >> 1] & 15 : g[k >> 1] >> 4;
+            *p |= i & 1 ? v : (uint8_t)(v << 4);
+        }
+    }
+}
+
 void term_draw(uint16_t back)
 {
     char row[W + 1];
@@ -359,7 +408,7 @@ void term_draw(uint16_t back)
         } else {
             memcpy(row, scr[line], W);
         }
-        ui_text_at(8 + r * RH, row, RH);
+        draw_row(8 + r * RH, row);
     }
     if (!back) {
         /* the cursor covers a whole glyph when it sits on one */

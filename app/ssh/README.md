@@ -36,14 +36,15 @@ the [main README](../../README.md#typing)).
   1024 lines);
 - UTF-8: wide characters (CJK, kana, Hangul, full-width forms) are drawn
   with the [external font](../../README.md#external-font) in two columns,
-  as the server's `wcwidth` counts them; accented Latin letters lose their
-  accents; the rest is `?` (two for characters outside the BMP). Writing
+  as the server's `wcwidth` counts them; Cyrillic and Greek in one column
+  with the glyphs of the public domain misc-fixed 4x6 font
+  (`tools/mknarrow84.py` writes `narrow.h`); accented Latin letters lose
+  their accents; the rest (Arabic, Devanagari, ...) is `?` (two for
+  characters outside the BMP). Writing
   over half of a wide character blanks the other half.
 - other languages are typed with the input methods (2nd+ALPHA, see the
   [main README](../../README.md#other-languages)); what is being typed shows
-  in the status line and is sent as UTF-8 when it is put in. Cyrillic,
-  Greek, Arabic and Devanagari come back as `?`: their glyphs are 8 pixels
-  wide and a terminal column is 4.
+  in the status line and is sent as UTF-8 when it is put in.
 
 The terminal is 24x7 with the external font (8-pixel rows, so that the
 glyphs fit) and 24x9 without it; the size is sent with the pty request.

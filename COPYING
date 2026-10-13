@@ -37,3 +37,4 @@ the font embedding exception, fonts/unifont/LICENSE.txt).
 dict/ja.tsv is from Mozc's open source dictionary (IPAdic and the Okinawa
 dictionary; their licenses are in dict/LICENSE-ja.txt). dict/zh.tsv is from
 Unihan (Unicode License v3, dict/LICENSE-zh.txt).
+fonts/misc/4x6.bdf is the misc-fixed 4x6 font (public domain).
