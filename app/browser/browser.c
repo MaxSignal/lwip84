@@ -36,7 +36,7 @@
 #define SEARCH_REF "https://lite.duckduckgo.com/"
 
 enum { B_IDLE, B_LOADING };
-enum { E_NONE, E_URL, E_GO, E_FIELD, E_PICK };
+enum { E_NONE, E_URL, E_GO, E_FIELD, E_PICK, E_DL };
 enum { H_STATUS, H_HEADER, H_BODY, H_CHUNK_SIZE, H_CHUNK_DATA, H_CHUNK_END, H_DONE };
 
 static struct sock *sock;
@@ -194,6 +194,137 @@ static uint8_t is_search(const char *s)
 /* ------------------------------------------------------------------ */
 /* HTTP                                                                */
 
+#ifdef TI84P_APP
+/* ------------------------------------------------------------------
+ * The TI-OS app only: programs and appvars (.8xp, .8xv, .8xg) are not
+ * shown but kept in RAM page 85h; after a yes the app ends and
+ * platform/tios/launch.s puts them into TI-OS (see there for the table) */
+extern uint8_t __app_save[];            /* platform/tios/crt0.s */
+#define DL_TAB 0x4000UL                 /* extended RAM: page 85h */
+#define DL_AT 0x4100UL                  /* the file */
+#define DL_MAX 0x3F00u
+static uint8_t dl_on, dl_bad, dl_count;
+static uint16_t dl_n;
+static uint16_t dl_need;
+
+static uint8_t is_ti_file(const char *u)
+{
+    const char *e = strchr(u, '?'), *dot;
+    char x[4];
+    uint8_t i;
+    if (!e)
+        e = u + strlen(u);
+    for (dot = e; dot > u && *dot != '.' && *dot != '/'; dot--)
+        ;
+    if (*dot != '.' || e - dot != 4)
+        return 0;
+    for (i = 0; i < 3; i++)
+        x[i] = lower(dot[1 + i]);
+    x[3] = 0;
+    return !strcmp(x, "8xp") || !strcmp(x, "8xv") || !strcmp(x, "8xg");
+}
+
+static void dl_write(const uint8_t *p, uint16_t n)
+{
+    if (dl_n + n > DL_MAX) {
+        dl_bad = 1;
+        return;
+    }
+    xram_write(DL_AT + dl_n, p, n);
+    dl_n += n;
+}
+
+static uint16_t dl_u16(uint16_t off)
+{
+    uint8_t b[2];
+    xram_read(DL_AT + off, b, 2);
+    return b[0] | (uint16_t)b[1] << 8;
+}
+
+/* TI-OS's free RAM when the app started: OPS - FPS in its saved page 81h
+ * (RAM page 87h) */
+static uint16_t tios_free(void)
+{
+    uint16_t fps, ops;
+    xram_read(0xC000UL + 0x1824, &fps, 2);
+    xram_read(0xC000UL + 0x1828, &ops, 2);
+    return ops > fps ? ops - fps : 0;
+}
+
+/* the variables of the file: the table for launch.s */
+static void dl_finish(void)
+{
+    uint8_t h[11], e[17];
+    uint16_t off = 55, end;
+    dl_count = 0;
+    dl_need = 0;
+    editing = E_DL;
+    xram_read(DL_AT, h, 11);
+    if (dl_bad || dl_n < 57 || memcmp(h, "**TI83F*", 8))
+        return;
+    end = 55 + dl_u16(53);
+    if (end > dl_n)
+        end = dl_n;
+    while (off + 2 + 13 <= end && dl_count < 19) {
+        uint16_t hl = dl_u16(off), len = dl_u16(off + 2), at;
+        if (hl != 11 && hl != 13)
+            break;
+        xram_read(DL_AT + off + 4, e, 9);       /* type, name */
+        at = off + 2 + hl + 2;
+        if (at + len > end)
+            break;
+        if (e[0] == 0x05 || e[0] == 0x06 || e[0] == 0x15) {
+            e[9] = (uint8_t)len;
+            e[10] = (uint8_t)(len >> 8);
+            e[11] = (uint8_t)(DL_AT + at);      /* where in page 85h at 4000h */
+            e[12] = (uint8_t)((DL_AT + at) >> 8);
+            xram_write(DL_TAB + 1 + (uint16_t)dl_count * 13, e, 13);
+            dl_count++;
+            dl_need += len + 24;
+        }
+        off = at + len;
+    }
+    xram_write(DL_TAB, &dl_count, 1);
+}
+
+static void draw_dl(void)
+{
+    char b[COLS + 1];
+    uint8_t i, e[13], k;
+    const char *name = strrchr(url, '/');
+    ui_clear();
+    ui_status("TI-OS file");
+    snprintf(b, sizeof(b), "%s", name ? name + 1 : url);
+    ui_text(0, b);
+    if (dl_bad || !dl_count) {
+        ui_text(2, dl_bad ? "too big: 16000 bytes at" : "no program or appvar in");
+        ui_text(3, dl_bad ? "most" : "it (TI-83+/84+ files)");
+        ui_text(8, "CLEAR: back");
+        lcd_update();
+        return;
+    }
+    for (i = 0; i < dl_count && i < 5; i++) {
+        xram_read(DL_TAB + 1 + (uint16_t)i * 13, e, 13);
+        memcpy(b, e[0] == 0x15 ? "appvar " : e[0] == 0x06 ? "prgm*  " : "prgm   ", 7);
+        for (k = 0; k < 8 && e[1 + k]; k++)
+            b[7 + k] = e[1 + k] >= 'A' && e[1 + k] <= 'Z' ? e[1 + k] :
+                       e[1 + k] >= '0' && e[1 + k] <= '9' ? e[1 + k] : e[1 + k] == 0x5B ? '@' : '?';
+        snprintf(b + 7 + k, sizeof(b) - 7 - k, " %u B", (unsigned)((e[9] | e[10] << 8) - 2));
+        ui_text(1 + i, b);
+    }
+    snprintf(b, sizeof(b), "TI-OS free RAM %u B", tios_free());
+    ui_text(6, b);
+    if (dl_need <= tios_free()) {
+        ui_text(7, "ENTER: put in TI-OS (the");
+        ui_text(8, "app ends)  CLEAR: back");
+    } else {
+        ui_text(7, "not enough RAM in TI-OS");
+        ui_text(8, "CLEAR: back");
+    }
+    lcd_update();
+}
+#endif
+
 static void stop(void)
 {
     if (sock) {
@@ -231,6 +362,9 @@ static void load(const char *u, const char *body, const char *ref)
     uint16_t port, n;
     int8_t tls;
     stop();
+#ifdef TI84P_APP
+    dl_on = 0;
+#endif
     if (body != bm->body) {
         strncpy(bm->body, body ? body : "", BODY_MAX);
         bm->body[BODY_MAX] = 0;
@@ -353,6 +487,14 @@ static void header_line(void)
         }
         hstate = chunked ? H_CHUNK_SIZE : H_BODY;
         chunk_left = 0;
+#ifdef TI84P_APP
+        if (http_status == 20 && is_ti_file(url)) {
+            dl_on = 1;                  /* kept, not shown */
+            dl_bad = 0;
+            dl_n = 0;
+            return;
+        }
+#endif
         html_begin(is_html);
         if (hdr_charset != HC_NONE)
             html_charset = hdr_charset;
@@ -378,6 +520,18 @@ static void header_line(void)
     }
 }
 
+
+static void body(const uint8_t *p, uint16_t n)
+{
+#ifdef TI84P_APP
+    if (dl_on) {
+        dl_write(p, n);
+        return;
+    }
+#endif
+    html_feed(p, n);
+}
+
 static void http_feed(const uint8_t *p, uint16_t n)
 {
     uint16_t k;
@@ -385,11 +539,11 @@ static void http_feed(const uint8_t *p, uint16_t n)
     while (n) {
         switch (hstate) {
         case H_BODY:
-            html_feed(p, n);
+            body(p, n);
             return;
         case H_CHUNK_DATA:
             k = n < chunk_left ? n : (uint16_t)chunk_left;
-            html_feed(p, k);
+            body(p, k);
             p += k;
             n -= k;
             if (!(chunk_left -= k))
@@ -633,6 +787,12 @@ static void draw(void)
         draw_pick();
         return;
     }
+#ifdef TI84P_APP
+    if (editing == E_DL) {
+        draw_dl();
+        return;
+    }
+#endif
     ui_clear();
     if (editing) {
         snprintf(buf, sizeof(buf), "%s %s", in_mode_str(),
@@ -755,6 +915,19 @@ uint8_t browser_key(uint8_t k)
         draw();
         return 1;
     }
+#ifdef TI84P_APP
+    if (editing == E_DL) {
+        if (k == K_ENTER && dl_count && !dl_bad && dl_need <= tios_free()) {
+            __app_save[10] = dl_count;  /* launch.s puts them in */
+            browser_leave();
+            return 0;
+        }
+        if (k == K_CLEAR || k == K_MODE || k == K_ENTER)
+            editing = E_NONE;
+        draw();
+        return 1;
+    }
+#endif
     if (editing) {
         int8_t r = le_key(&le, k);
         if (r == LE_DONE) {
@@ -901,6 +1074,14 @@ void browser_poll(void)
             draw();
             return;
         }
+#ifdef TI84P_APP
+        if (dl_on) {
+            dl_on = 0;
+            dl_finish();
+            draw();
+            return;
+        }
+#endif
         if (!got)
             strcpy(msg, msg[0] && memcmp(msg, "error", 5) == 0 ? msg : "no response");
         else

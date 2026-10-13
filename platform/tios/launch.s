@@ -168,6 +168,8 @@ leave:
 	ld	a, (___app_save + 8)
 	ex	af, af'
 	exx
+	ld	a, (___app_save + 10)		; variables to put into TI-OS
+	ld	b, a
 	ld	a, (___app_save + 3)
 	ld	c, a
 	ld	a, (___app_save + 4)
@@ -225,8 +227,125 @@ leave:
 	call	lcd_cmd
 	ld	iy, #0x89F0			; TI-OS's flags: its ISR and bcalls use IY
 	ei
+	exx
+	ld	a, b
+	exx
+	or	a
+	call	NZ, install
 	call	0x0050				; B_JUMP _JForceCmdNoChar
 	.dw	0x4027
+
+;; The variables the browser downloaded (app/browser/browser.c): a table
+;; at 4000h of RAM page 85h, count then 13 bytes each: type, name (8),
+;; bytes with the size word (2), where they are (2, 4000h-7FFFh of page
+;; 85h).  Each replaces a variable of that name if there is room for it.
+INST_COPY = 0x9872			; appBackUpScreen: code may run there
+INST_TAB = 0x86EC			; saveSScreen: the table
+INST_CUR = 0x9872 + 0x40		; the entry being done
+INST_LEFT = 0x9872 + 0x42		; entries left
+OP1 = 0x8478
+
+install:
+	ld	hl, #xcopy
+	ld	de, #INST_COPY
+	ld	bc, #xcopy_end - xcopy
+	ldir
+	ld	hl, #0x4000
+	ld	de, #INST_TAB
+	ld	bc, #256
+	call	INST_COPY
+	ld	a, (INST_TAB)
+	or	a
+	ret	Z
+	ld	(INST_LEFT), a
+	ld	hl, #INST_TAB + 1
+	ld	(INST_CUR), hl
+inst_loop:
+	call	inst_op1
+	rst	0x28
+	.dw	0x42F1				; _ChkFindSym
+	jr	C, inst_new
+	rst	0x28
+	.dw	0x4FC6				; _DelVarArc
+inst_new:
+	call	inst_op1
+	ld	hl, (INST_CUR)
+	ld	de, #9
+	add	hl, de
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)				; bytes with the size word
+	ex	de, hl
+	push	hl
+	ld	de, #24				; name and symbol table entry
+	add	hl, de
+	rst	0x28
+	.dw	0x42FD				; _EnoughMem: carry if not
+	pop	hl
+	jr	C, inst_next
+	dec	hl
+	dec	hl				; the variable's size
+	ld	a, (OP1)
+	cp	#0x15
+	jr	Z, inst_appvar
+	cp	#0x06
+	jr	Z, inst_prot
+	rst	0x28
+	.dw	0x4339				; _CreateProg
+	jr	inst_copy
+inst_prot:
+	rst	0x28
+	.dw	0x4E6D				; _CreateProtProg
+	jr	inst_copy
+inst_appvar:
+	rst	0x28
+	.dw	0x4E6A				; _CreateAppVar
+inst_copy:
+	;; DE: the new variable's size word; size word and data from page 85h
+	ld	hl, (INST_CUR)
+	ld	bc, #9
+	add	hl, bc
+	ld	c, (hl)
+	inc	hl
+	ld	b, (hl)
+	inc	hl
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	call	INST_COPY
+inst_next:
+	ld	hl, (INST_CUR)
+	ld	de, #13
+	add	hl, de
+	ld	(INST_CUR), hl
+	ld	hl, #INST_LEFT
+	dec	(hl)
+	jr	NZ, inst_loop
+	ret
+
+inst_op1:
+	ld	hl, (INST_CUR)
+	ld	de, #OP1
+	ld	bc, #9
+	ldir
+	xor	a
+	ld	(de), a				; the name ends there at the latest
+	ret
+
+;; copied to INST_COPY: HL in page 85h (at 4000h) -> DE, BC bytes
+xcopy:
+	di
+	in	a, (0x06)
+	push	af
+	ld	a, #0x85
+	out	(0x06), a
+	ldir
+	pop	af
+	out	(0x06), a
+	ei
+	ret
+xcopy_end:
 
 lcd_cmd:
 	ld	b, a

@@ -431,6 +431,49 @@ static uint8_t port_in(uint8_t p)
     }
 }
 
+static uint8_t mem_read(uint16_t addr);
+static void mem_write(uint16_t addr, uint8_t v);
+
+/* -app: the few bcalls the apps make when they put downloaded programs into
+ * TI-OS (platform/tios/launch.s); variables go to 9D95h on */
+static void app_bcall(void)
+{
+    static uint16_t next = 0x9D95;
+    uint16_t sp = ti.cpu.sp, ret = mem_read(sp) | mem_read(sp + 1) << 8;
+    uint16_t id = mem_read(ret) | mem_read(ret + 1) << 8, n = ti.cpu.hl;
+    char name[9];
+    ret += 2;
+    mem_write(sp, ret & 0xFF);
+    mem_write(sp + 1, ret >> 8);
+    for (int i = 0; i < 8; i++) {
+        uint8_t c = mem_read(0x8479 + i);
+        name[i] = c >= 0x20 && c < 0x7F ? c : 0;
+    }
+    name[8] = 0;
+    switch (id) {
+    case 0x42F1:                        /* _ChkFindSym: not found */
+        ti.cpu.f |= 1;
+        break;
+    case 0x42FD:                        /* _EnoughMem: enough */
+        ti.cpu.f &= ~1;
+        break;
+    case 0x4FC6:                        /* _DelVarArc */
+        break;
+    case 0x4339: case 0x4E6D: case 0x4E6A: /* _CreateProg, ProtProg, AppVar */
+        mem_write(next, n & 0xFF);
+        mem_write(next + 1, n >> 8);
+        ti.cpu.de = next;
+        fprintf(stderr, "emu84: bcall %04X: %s, %u bytes at %04X\n", id, name, n, next);
+        ti.app_vars++;
+        ti.app_var_at = next;
+        next += n + 2;
+        break;
+    default:
+        fprintf(stderr, "emu84: bcall %04X not known\n", id);
+        ti.fault = 1;
+    }
+}
+
 static void port_out(uint8_t p, uint8_t v)
 {
     if ((p >= 0x4A && p <= 0x5B) || (p >= 0x80 && p <= 0xAF)) {
@@ -491,14 +534,22 @@ static void port_out(uint8_t p, uint8_t v)
         }
         break;
     }
+    case 0xFC:
+        /* the fake TI-OS of -app: a bcall (RST 28h, then the address) */
+        if (ti.app)
+            app_bcall();
+        break;
     case 0xFD:
         /* the fake TI-OS of -app: the app went back (B_JUMP) */
         if (ti.app) {
             int bad = -1;
             /* below TI-OS's SP (FFEEh) the way back made calls */
-            for (int i = 0; i < 2 * 0x4000 && bad < 0; i++)
+            for (int i = 0; i < 2 * 0x4000 && bad < 0 && !ti.app_vars; i++)
                 if (ti.ram[i] != ti.app_ram[i] && !(i >= 0x3FE0 && i < 0x3FEE) && i != 0x4447)
                     bad = i;
+            if (ti.app_vars)
+                fprintf(stderr, "emu84: %d variables put into TI-OS (RAM not compared)\n",
+                        ti.app_vars);
             fprintf(stderr, "emu84: contrast at 8447h: %u, IY %04X%s\n", ti.ram[0x4447],
                     (unsigned)ti.cpu.iy, ti.cpu.iy == 0x89F0 ? "" : " (TI-OS needs 89F0h)");
             fprintf(stderr, "emu84: app exit to TI-OS: SP %04X, port 03 %02X, "
@@ -771,6 +822,7 @@ int main(int argc, char **argv)
         static const uint8_t isr[] = {
             0xF5, 0xAF, 0xD3, 0x03, 0x3E, 0x0B, 0xD3, 0x03, 0xF1, 0xFB, 0xC9};
         static const uint8_t bjump[] = {0xD3, 0xFD, 0x76, 0x18, 0xFD};
+        static const uint8_t bcall[] = {0xD3, 0xFC, 0xC9};
         n = fread(app, 1, sizeof(app), f);
         fclose(f);
         for (size_t p = 0; p * 0x4000 < n; p++)
@@ -779,6 +831,7 @@ int main(int argc, char **argv)
         memcpy(ti.flash, start, sizeof(start));
         memcpy(ti.flash + 0x38, isr, sizeof(isr));
         memcpy(ti.flash + 0x50, bjump, sizeof(bjump));
+        memcpy(ti.flash + 0x28, bcall, sizeof(bcall));
         /* TI-OS's RAM: a pattern, and the return address of the call */
         for (int i = 0; i < 2 * 0x4000; i++)
             ti.ram[i] = (uint8_t)(i * 7 + (i >> 8) + 3);

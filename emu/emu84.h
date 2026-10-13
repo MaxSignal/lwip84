@@ -23,7 +23,9 @@ struct ti84 {
     int flash_pages;
     int ram48;                  /* 48 KiB of RAM: pages 2-7 are page 2 */
     int app;                    /* -app: a TI-OS application on a fake TI-OS */
-    uint16_t sp_min;            /* lowest stack pointer in C000-FFFF ("stack") */
+    uint16_t sp_min;
+    int app_vars;                 /* variables made by the fake TI-OS */
+    uint16_t app_var_at;            /* lowest stack pointer in C000-FFFF ("stack") */
     uint8_t app_ram[2 * 0x4000]; /* TI-OS's RAM pages 0 and 1 before the app */
     uint8_t ram[8 * 0x4000];
     uint8_t bank_a, bank_b, ram_c000;

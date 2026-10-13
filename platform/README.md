@@ -66,6 +66,15 @@ page, its length at 4083h, the name and page count in the header) and
 `rabbitsign` signs it with the "shareware" key 0104 (`tools/local/bin`,
 built from <https://github.com/abbrev/rabbitsign>).
 
+The browser app can also bring programs and appvars into TI-OS: a link to
+a `.8xp`, `.8xv` or `.8xg` file (TI-83 Plus/84 Plus format) is not shown
+but kept in RAM page 85h (16 KB at most). The browser lists the programs
+and appvars in it with TI-OS's free RAM; ENTER ends the app, and after
+TI-OS has its RAM back `launch.s` makes each variable (`_ChkFindSym`,
+`_DelVarArc` for one of the same name, `_EnoughMem`, `_CreateProg`,
+`_CreateProtProg` or `_CreateAppVar`) and copies the data from page 85h
+with a small routine in `appBackUpScreen`. They land in RAM, not archived.
+
 Send the `.8xk` to TI-OS with TiLP, TI Connect or `ti84link sendapp FILE`;
 it appears under APPS. After the app, TI-OS may need the USB cable plugged
 in again before it talks to a computer.
@@ -80,4 +89,6 @@ build-debug-tios-browser/emu84 -app -d -u -n /tmp/passt.sock build-debug-tios-br
 `-app` loads the pages as TI-OS would (first page 1Ch, then downwards),
 puts a stand-in for TI-OS on page 0 that starts the app, fills TI-OS's RAM
 with a pattern and checks it when the app goes back ("RAM restored"), and
-faults on code run from RAM outside TI-OS's limits.
+faults on code run from RAM outside TI-OS's limits. It also answers the
+bcalls of the download above (variables at 9D95h on) and reports IY and
+the contrast at the exit.

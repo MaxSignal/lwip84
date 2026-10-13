@@ -485,6 +485,9 @@ static void cx_step(void)
             u.csr0 |= CSR0_SETUPEND;
             u.csr0 &= ~CSR0_TXPKTRDY;
         }
+        /* and the controller flushes EP0's FIFO: a packet queued for a data
+         * stage the host cut short does not stay in front of the answer */
+        e->txlen = 0;
         memcpy(e->rxbuf, u.cx_setup, 8);
         e->rxlen = 8;
         e->rxpos = 0;
