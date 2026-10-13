@@ -53,16 +53,35 @@ void dbg_printf(const char *fmt, ...);
 
 /* far.c (page 0) */
 extern uint8_t k_is_emulator;
+extern uint8_t k_ram48;         /* 48 KiB of RAM: pages 82h-87h are one page */
 void k_detect_platform(void);
 void far_read(uint8_t page, uint16_t addr, void *dst, uint16_t len);
 /* extended RAM pages 82h-87h: 96 KiB for application buffers (page text,
- * terminal scrollback); buffers passed here must lie in 8000h-FFFFh */
+ * terminal scrollback); buffers passed here must lie in 8000h-FFFFh.  The
+ * calculators with 48 KiB of RAM have one such page (make RAM48=1). */
+#ifdef TI84P_RAM48
+#define XRAM_SIZE 0x4000UL
+#define XRAM_BROWSER 0x0000UL           /* 11.2 KiB: web page (app/browser/html.h) */
+#define XRAM_BROWSER_STATE 0x2CC0UL     /* url and host while it is not running */
+#define XRAM_HIST 0x2E10UL              /* browser history: 2 pages */
+#define XRAM_HIST_SIZE 0x0530u
+#define XRAM_CON 0x3340UL               /* console history */
+#define XRAM_CON_LINES 32u
+#define XRAM_SSH_STATE 0x3640UL         /* SSH login while it is not running */
+#define XRAM_SSH 0x3690UL               /* terminal scrollback */
+#define XRAM_SSH_LINES 100u
+#else
 #define XRAM_SIZE 0x18000UL
-#define XRAM_BROWSER 0x00000UL          /* 64 KiB: web page text and links */
+#define XRAM_BROWSER 0x00000UL          /* 61.5 KiB: web page (app/browser/html.h) */
+#define XRAM_BROWSER_STATE 0x0FC00UL    /* url and host while it is not running */
 #define XRAM_SSH 0x10000UL              /* 24 KiB: terminal scrollback */
+#define XRAM_SSH_LINES 1024u
 #define XRAM_CON 0x16000UL              /* 3 KiB: console history */
+#define XRAM_CON_LINES 128u
+#define XRAM_SSH_STATE 0x16C00UL        /* SSH login while it is not running */
 #define XRAM_HIST 0x16D00UL             /* 4.75 KiB: browser history */
 #define XRAM_HIST_SIZE 0x1300u
+#endif
 void xram_read(uint32_t addr, void *dst, uint16_t len);
 void xram_write(uint32_t addr, const void *src, uint16_t len);
 

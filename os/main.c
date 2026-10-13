@@ -189,6 +189,16 @@ static void app_switch(uint8_t a)
     app = a;
     if (a == A_MENU)
         kx_start();                     /* the browser or SSH will want the key pair */
+#ifndef TI84P_RAM48
+    if (k_ram48 && (a == A_WEB || a == A_SSH)) {
+        /* their buffers need the 96 KiB of extended RAM */
+        app = A_MENU;
+        menu_draw();
+        ui_text(8, " needs the 48K build");
+        lcd_update();
+        return;
+    }
+#endif
     if ((a == A_WEB && !browser_enter()) || (a == A_SSH && !ssh_enter())) {
         app = A_MENU;
         menu_draw();
@@ -267,6 +277,10 @@ void main(void)
     if (!font_ok)
         con_puts("no font: non-ASCII text as ?\n");
     dict_init();
+#ifndef TI84P_RAM48
+    if (k_ram48)
+        con_puts("48 KiB RAM: this needs\nthe 48K build (RAM48=1)\n");
+#endif
     net84_init();
     dbg_printf("lwip up, heap %u%s\n", heap_free_bytes(), k_is_emulator ? " (emu)" : "");
     if (usb_last_error)

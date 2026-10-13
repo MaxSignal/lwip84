@@ -21,6 +21,7 @@ struct ti84 {
     uint64_t pins;
     uint8_t *flash;
     int flash_pages;
+    int ram48;                  /* 48 KiB of RAM: pages 2-7 are page 2 */
     uint8_t ram[8 * 0x4000];
     uint8_t bank_a, bank_b, ram_c000;
     int mem_mode, cpu_speed, flash_unlocked;

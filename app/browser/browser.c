@@ -30,7 +30,7 @@
 #define X_HIST XRAM_HIST
 #define HIST_ENTRY (URL_MAX + 1 + BODY_MAX + 1)
 #define HIST_MAX (XRAM_HIST_SIZE / HIST_ENTRY)
-#define X_STATE (XRAM_BROWSER + 0xFC00UL)  /* url and host while not running */
+#define X_STATE XRAM_BROWSER_STATE         /* url and host while not running */
 
 #define SEARCH_URL "https://lite.duckduckgo.com/lite/"
 #define SEARCH_REF "https://lite.duckduckgo.com/"

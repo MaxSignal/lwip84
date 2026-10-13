@@ -20,7 +20,7 @@
 #define H term_rows
 #define RH (font_ok ? 8 : 6)            /* pixel rows per text row */
 uint8_t term_rows = 9;
-#define SB_LINES 1024u                  /* 24 KiB scrollback */
+#define SB_LINES XRAM_SSH_LINES         /* scrollback (24 KiB) */
 
 static char (*scr)[W];                  /* H rows, allocated by term_open */
 static uint8_t cx, cy, esc, nparam, utf8_need, utf8_big, wrap_pending;

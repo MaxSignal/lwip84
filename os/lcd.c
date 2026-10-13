@@ -8,7 +8,7 @@
 uint8_t lcd_buf[768];          /* 64 rows x 12 bytes, MSB = leftmost pixel */
 /* console: the line being written is in RAM, older lines in a ring in
  * extended RAM (XRAM_CON) */
-#define CON_HIST 128u           /* lines kept for scrolling back */
+#define CON_HIST XRAM_CON_LINES /* lines kept for scrolling back */
 static char con_cur[CON_COLS];
 static uint8_t con_x;           /* CON_COLS: a newline is pending */
 static uint16_t con_lines;      /* lines moved to the history */

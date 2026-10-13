@@ -16,7 +16,17 @@ void xram_write(uint32_t addr, const void *src, uint16_t len);
 #define HTML_COLS CON_COLS
 #endif
 
-/* extended RAM of the browser (64 KiB) */
+/* extended RAM of the browser */
+#ifdef TI84P_RAM48
+#define HX_TEXT     (XRAM_BROWSER)              /* lines of HTML_COLS bytes */
+#define HTML_MAX_LINES 288u                     /* 6.75 KiB */
+#define HX_ITEMS    (XRAM_BROWSER + 0x1B00UL)   /* struct html_item[] */
+#define HTML_MAX_ITEMS 160u                     /* 1.9 KiB */
+#define HX_FORMS    (XRAM_BROWSER + 0x2280UL)   /* struct html_form[] */
+#define HTML_MAX_FORMS 16u
+#define HX_HEAP     (XRAM_BROWSER + 0x22C0UL)   /* NUL-terminated strings */
+#define HTML_HEAP_SIZE 0x0A00u                  /* 2.5 KiB, up to 2CC0 */
+#else
 #define HX_TEXT     (XRAM_BROWSER)              /* lines of HTML_COLS bytes */
 #define HTML_MAX_LINES 1600u                    /* 37.5 KiB */
 #define HX_ITEMS    (XRAM_BROWSER + 0x9600UL)   /* struct html_item[] */
@@ -25,7 +35,7 @@ void xram_write(uint32_t addr, const void *src, uint16_t len);
 #define HTML_MAX_FORMS 64u
 #define HX_HEAP     (XRAM_BROWSER + 0xBB00UL)   /* NUL-terminated strings */
 #define HTML_HEAP_SIZE 0x3B00u                  /* 14.75 KiB, up to F600 */
-/* F600-FFFF: history and saved state of browser.c */
+#endif
 
 #define HTML_NONE 0xFFFFu
 #define HTML_NOFORM 0xFFu

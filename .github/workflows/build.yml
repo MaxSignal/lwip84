@@ -77,6 +77,11 @@ jobs:
       - name: Build TI-84 Plus SE
         run: make -j"$(nproc)" MODEL=84pse
 
+      - name: Build for 48 KiB of RAM
+        run: |
+          make -j"$(nproc)" RAM48=1
+          make -j"$(nproc)" RAM48=1 MODEL=84pse
+
       - name: Build debug images
         run: |
           make -j"$(nproc)" DEBUG=1
@@ -119,6 +124,8 @@ jobs:
           cp build-84p/lwip84.rom             dist/lwip84-ti84plus.rom
           cp build-84pse/lwip84.8xu           dist/lwip84-ti84plusse.8xu
           cp build-84pse/lwip84.rom           dist/lwip84-ti84plusse.rom
+          cp build-84p-48k/lwip84.8xu         dist/lwip84-ti84plus-48k.8xu
+          cp build-84pse-48k/lwip84.8xu       dist/lwip84-ti84plusse-48k.8xu
           cp build-debug-84p/lwip84.8xu       dist/lwip84-ti84plus-debug.8xu
           cp build-debug-84pse/lwip84.8xu     dist/lwip84-ti84plusse-debug.8xu
           cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
@@ -145,6 +152,7 @@ jobs:
             echo "|---|---|"
             echo "| \`lwip84-ti84plus.8xu\` | OS upgrade for the TI-84 Plus |"
             echo "| \`lwip84-ti84plusse.8xu\` | OS upgrade for the TI-84 Plus Silver Edition |"
+            echo "| \`*-48k.8xu\` | for the later calculators with 48 KiB of RAM (smaller buffers) |"
             echo "| \`*-debug.8xu\` | debug builds (USB/driver log on the LCD) |"
             echo "| \`*.rom\` | flash images for emulators |"
             echo

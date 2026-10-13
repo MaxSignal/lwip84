@@ -3,7 +3,7 @@
 #include "hw.h"
 #include "kernel.h"
 
-uint8_t k_is_emulator;
+uint8_t k_is_emulator, k_ram48;
 
 /* Copy len bytes from page:addr (addr in 4000h-7FFFh) to RAM below 8000h..FFFFh. */
 void far_read(uint8_t page, uint16_t addr, void *dst, uint16_t len)
@@ -20,6 +20,17 @@ void k_detect_platform(void)
     uint8_t boot_page = (port_hw_type & 1) ? 0x7F : 0x3F;
     far_read(boot_page, 0x4010, sig, 6);
     k_is_emulator = memcmp(sig, "emu84", 6) == 0;
+    /* 48 KiB of RAM: page 83h is page 82h (at boot nothing is there yet) */
+    {
+        uint8_t old = port_bank_a;
+        port_bank_a = 0x83;
+        *(volatile uint8_t *)0x4000 = 0x55;
+        port_bank_a = 0x82;
+        *(volatile uint8_t *)0x4000 = 0xAA;
+        port_bank_a = 0x83;
+        k_ram48 = *(volatile uint8_t *)0x4000 == 0xAA;
+        port_bank_a = old;
+    }
 }
 
 /* Extended RAM: pages 82h..87h (96 KiB, addresses 0..17FFFh) mapped into

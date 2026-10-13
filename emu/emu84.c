@@ -7,6 +7,7 @@
  * Usage: emu84 [options] rom.bin
  *   -s FILE     read commands from FILE instead of stdin
  *   -se         TI-84 Plus SE (2 MiB flash) instead of TI-84 Plus (1 MiB)
+ *   -r48        48 KiB of RAM (later revisions): pages 2-7 are one page
  *   -d          print OS debug output (port FEh, DEBUG builds only)
  *   -u          attach the virtual USB host (see usb.c)
  *   -n SOCKET   with -u: bridge NCM frames to passt's UNIX socket SOCKET
@@ -48,7 +49,10 @@ static uint8_t *page_ptr(uint8_t page, int *is_flash)
 {
     if (page & 0x80) {
         *is_flash = 0;
-        return ti.ram + (page & 7) * 0x4000;
+        page &= 7;
+        if (ti.ram48 && page > 2)
+            page = 2;
+        return ti.ram + page * 0x4000;
     }
     *is_flash = 1;
     return ti.flash + (page & (ti.flash_pages - 1)) * 0x4000;
@@ -694,6 +698,8 @@ int main(int argc, char **argv)
             script = argv[++i];
         else if (!strcmp(argv[i], "-se"))
             se = 1;
+        else if (!strcmp(argv[i], "-r48"))
+            ti.ram48 = 1;
         else if (!strcmp(argv[i], "-d"))
             ti.debug_out = 1;
         else if (!strcmp(argv[i], "-u"))
@@ -704,7 +710,7 @@ int main(int argc, char **argv)
             rom = argv[i];
     }
     if (!rom) {
-        fprintf(stderr, "usage: emu84 [-s script] [-se] [-d] [-u [-n tap]] rom.bin\n");
+        fprintf(stderr, "usage: emu84 [-s script] [-se] [-r48] [-d] [-u [-n tap]] rom.bin\n");
         return 2;
     }
     ti.flash_pages = se ? 128 : 64;

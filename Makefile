@@ -44,6 +44,11 @@ else
 B       = build-$(MODEL)
 DEFS    =
 endif
+# RAM48=1: for the calculators with 48 KiB of RAM (one extended RAM page)
+ifeq ($(RAM48),1)
+B      := $(B)-48k
+DEFS   += -DTI84P_RAM48
+endif
 
 CFLAGS  = -mz80 --std-sdcc11 --opt-code-size --constseg CONST $(DEFS) \
           -DFE_ASM '-D__attribute__(x)=' \

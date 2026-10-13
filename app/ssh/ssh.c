@@ -52,7 +52,7 @@ static uint32_t next_draw, t_conn;
 
 /* allocated while the SSH client runs; host and user are kept in extended
  * RAM in between */
-#define X_STATE (XRAM_CON + 0xC00UL)
+#define X_STATE XRAM_SSH_STATE
 struct ssh_mem {
     char f_host[48], f_user[32];        /* saved: keep first */
     char f_pass[48], msg[CON_COLS + 1];

@@ -10,8 +10,11 @@ console.
 ![Wikipedia's Zilog Z80 article on the calculator](docs/wikipedia-z80-text.png)
 ![The Japanese Wikipedia article on Z80](docs/wikipedia-z80-ja.png)
 
-- Only the early hardware revisions with **128 KiB of RAM** are supported,
-  not the later ones with 48 KiB.
+- Made for the early hardware revisions with **128 KiB of RAM**. The later
+  ones with 48 KiB have their own build (`make RAM48=1`, `*-48k.8xu`): a
+  page keeps 288 lines, 2 pages of history, 100 lines of SSH scrollback.
+  The other build tells them apart and does not start the browser and SSH
+  there.
 - It replaces TI-OS, which leaves too little memory for a network stack.
   TI-OS can be reinstalled from the boot code at any time.
 - lwIP 2.2.1 is a git submodule (`lwip/`), used unchanged except for
@@ -152,6 +155,7 @@ GCC (emulator, host tests), `patch`, and
 make                      # build-84p/lwip84.8xu (OS upgrade) and lwip84.rom
 make MODEL=84pse          # TI-84 Plus Silver Edition
 make DEBUG=1              # debug build: log on the LCD (or in emu84)
+make RAM48=1              # for 48 KiB of RAM: build-84p-48k/
 make emu                  # the emulator, build-84p/emu84
 make FONT=other.txt       # other external fonts (FONT= for none)
 ```
@@ -210,7 +214,11 @@ dictionaries on 08h-0Fh. `tools/mkrom.py` refuses the other pages.
 
 The six other RAM pages (96 KiB) are reached through `xram_read` /
 `xram_write` and hold the web page (64 KiB), the SSH scrollback (24 KiB),
-the console history and the browser history.
+the console history and the browser history. On the calculators with 48
+KiB of RAM pages 82h-87h are one page; `k_detect_platform` sees that, and
+the 48K build (`TI84P_RAM48`, layout in `os/kernel.h` and
+`app/browser/html.h`) fits everything into its 16 KiB. `emu84 -r48`
+behaves like those calculators.
 
 ### USB
 
