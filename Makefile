@@ -47,7 +47,7 @@ endif
 
 CFLAGS  = -mz80 --std-sdcc11 --opt-code-size --constseg CONST $(DEFS) \
           -DFE_ASM '-D__attribute__(x)=' \
-          -I include -I os -I lib/net -I lib/crypto -I lib/font \
+          -I include -I os -I lib/net -I lib/crypto -I lib/font -I lib/ime \
           -I app/browser -I app/ssh -I app/console -I $(LWIP_SRC)/include
 
 # modules that must stay in page 0 (interrupt path, runtime)
@@ -57,7 +57,7 @@ COMMON_S = os/crt0.s os/farcall.s os/usb_ll.s
 # the OS (os/), the library (lib/) and the applications (app/)
 BANKED_C = os/main.c os/input.c os/ui.c os/lcd.c os/fmt.c os/usb_ctl.c os/ncm.c os/heap.c \
            lib/net/sys_arch.c lib/net/time84.c lib/net/netif_ncm.c lib/net/net84.c \
-           lib/net/sock84.c lib/net/tls84.c lib/net/kx84.c lib/font/font.c \
+           lib/net/sock84.c lib/net/tls84.c lib/net/kx84.c lib/font/font.c lib/ime/ime.c \
            lib/crypto/sha256.c lib/crypto/chacha.c lib/crypto/aes.c lib/crypto/x25519.c \
            lib/crypto/rng.c \
            app/browser/browser.c app/browser/html.c app/ssh/ssh.c app/ssh/term.c \

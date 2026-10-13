@@ -673,10 +673,15 @@ static void start_field(uint8_t f)
 
 static void draw(void)
 {
-    char b[CON_COLS + 1];
+    char b[CON_COLS * 2 + 1];
+    if (in_picking) {
+        in_pick_draw();
+        lcd_update();
+        return;
+    }
     ui_clear();
     if (field != F_NONE) {
-        snprintf(b, sizeof(b), "%c SSH login", in_mode_char());
+        snprintf(b, sizeof(b), "%s SSH login", in_mode_str());
         ui_status(b);
         ui_text(0, "host[:port], user and");
         ui_text(1, "password. ENTER = next");
@@ -687,14 +692,20 @@ static void draw(void)
         le_draw(&le, field == F_HOST ? 4 : field == F_USER ? 5 : 6,
                 field == F_HOST ? "host " : field == F_USER ? "user " : "pass ");
     } else {
-        if (st == S_OPEN && !msg[0])
-            snprintf(b, sizeof(b), "%c%s %s", in_mode_char(), ctrl_next ? "^" : " ", f_host);
+        if (st == S_OPEN && ime_pre[0]) {
+            /* the composition, sent when it is committed */
+            uint8_t n = (uint8_t)strlen(in_mode_str());
+            memcpy(b, in_mode_str(), n);
+            b[n++] = ' ';
+            ui_from_utf8(ime_pre, b + n, (uint8_t)(sizeof(b) - n));
+        } else if (st == S_OPEN && !msg[0])
+            snprintf(b, sizeof(b), "%s%s %s", in_mode_str(), ctrl_next ? "^" : " ", f_host);
         else if (st == S_COMPUTE && kex)
             snprintf(b, sizeof(b), "key exchange %u%%", x25519_progress(kex));
         else if ((st == S_VERSION || st == S_KEXINIT) && !kx_ready())
             snprintf(b, sizeof(b), "key pair %u%%", kx_progress());
         else
-            snprintf(b, sizeof(b), "%c %s", in_mode_char(), msg);
+            snprintf(b, sizeof(b), "%s %s", in_mode_str(), msg);
         ui_status(b);
         term_draw(back);
     }
@@ -748,10 +759,22 @@ static void send_keys(const uint8_t *s, uint8_t n)
     send_packet();
 }
 
+/* UTF-8 text to the shell; NULL: the composition */
+static void send_text(const char *s)
+{
+    char out[IME_OUT_MAX];
+    if (!s) {
+        ime_flush(out);
+        s = out;
+    }
+    send_keys((const uint8_t *)s, (uint8_t)strlen(s));
+}
+
 /* returns 0 when the user quits */
 uint8_t ssh_key(uint8_t k)
 {
     uint8_t buf[4];
+    char out[IME_OUT_MAX];
     int16_t c;
     if (k == K_NONE || !sm)
         return 1;
@@ -787,6 +810,11 @@ uint8_t ssh_key(uint8_t k)
         draw();
         return 1;
     }
+    if (in_picking) {
+        in_pick_key(k);
+        draw();
+        return 1;
+    }
     back = 0;
     if (st == S_CLOSED) {               /* any key: back to the login form */
         if (k == K_ENTER) {
@@ -795,6 +823,22 @@ uint8_t ssh_key(uint8_t k)
         }
         draw();
         return 1;
+    }
+    if (ime_pre[0]) {
+        /* the composition takes DEL, CLEAR and ENTER; other keys send it */
+        if (k == K_DEL || k == K_CLEAR || k == K_ENTER) {
+            if (k == K_DEL)
+                ime_back();
+            else if (k == K_CLEAR)
+                ime_reset();
+            else
+                send_text(NULL);
+            draw();
+            return 1;
+        }
+        if (k == K_UP || k == K_DOWN || k == K_LEFT || k == K_RIGHT || k == K_VARS ||
+            k == K_MODE || k == K_XT)
+            send_text(NULL);
     }
     switch (k) {
     case K_ENTER: buf[0] = '\r'; send_keys(buf, 1); break;
@@ -810,15 +854,14 @@ uint8_t ssh_key(uint8_t k)
         send_keys(buf, 3);
         break;
     default:
-        c = in_char(k);
-        if (c >= 0) {
-            if (ctrl_next) {
-                ctrl_next = 0;
-                c &= 0x1F;
-            }
-            buf[0] = (uint8_t)c;
-            send_keys(buf, 1);
+        c = in_text(k, out);
+        if (ctrl_next && c == 1 && (uint8_t)out[0] < 0x80) {
+            ctrl_next = 0;
+            out[0] &= 0x1F;
         }
+        send_text(out);
+        if (c == IN_PICK)
+            in_pick_open();
     }
     draw();
     return 1;

@@ -630,7 +630,7 @@ static void draw(void)
     }
     ui_clear();
     if (editing) {
-        snprintf(buf, sizeof(buf), "%c %s", in_mode_char(),
+        snprintf(buf, sizeof(buf), "%s %s", in_mode_str(),
                  editing == E_URL ? "URL or search" : editing == E_GO ? "item number" : "edit field");
     } else if (state == B_LOADING && !rx_bytes && tls84_status(buf, sizeof(buf))) {
         /* key exchange progress */
@@ -662,7 +662,7 @@ static void draw(void)
         ui_text(4, "UP/DN LEFT/RIGHT scroll");
         ui_text(5, "CLEAR stop  MODE quit");
         ui_text(6, "ALPHA: 1 > A > a  2nd:");
-        ui_text(7, "symbols (see README)");
+        ui_text(7, "symbols 2nd+ALPHA: lang");
     }
     if (editing == E_URL)
         le_draw(&le, ROWS - 1, ">");

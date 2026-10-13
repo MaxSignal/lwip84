@@ -102,6 +102,11 @@ jobs:
           gcc -O2 -Wall -DHTML_HOST -I app/browser -I lib/font -o "$TMPDIR/html_test" app/browser/tests/html_test.c app/browser/html.c lib/font/font.c
           sh app/browser/tests/html_check.sh "$TMPDIR/html_test"
 
+      - name: Input method tests
+        run: |
+          gcc -O2 -Wall -I lib/ime -o "$TMPDIR/ime_test" lib/ime/tests/ime_test.c lib/ime/ime.c
+          "$TMPDIR/ime_test"
+
       - name: Collect files
         run: |
           set -e

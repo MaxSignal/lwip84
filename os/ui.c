@@ -88,3 +88,51 @@ void ui_text(uint8_t row, const char *s)
 {
     ui_text_at(8 + row * 6, s, 6);
 }
+
+uint8_t ui_utf8_char(const char *s, uint16_t *cp)
+{
+    uint8_t c = (uint8_t)s[0];
+    if (c < 0xC0) {
+        *cp = c < 0x80 ? c : '?';
+        return 1;
+    }
+    if (c < 0xE0) {
+        if (((uint8_t)s[1] & 0xC0) != 0x80) {
+            *cp = '?';
+            return 1;
+        }
+        *cp = (uint16_t)(c & 0x1F) << 6 | (s[1] & 0x3F);
+        return 2;
+    }
+    if (((uint8_t)s[1] & 0xC0) != 0x80 || ((uint8_t)s[2] & 0xC0) != 0x80) {
+        *cp = '?';
+        return 1;
+    }
+    if (c >= 0xF0) {                    /* outside the BMP */
+        *cp = '?';
+        return ((uint8_t)s[3] & 0xC0) == 0x80 ? 4 : 3;
+    }
+    *cp = (uint16_t)(c & 0x0F) << 12 | (uint16_t)(s[1] & 0x3F) << 6 | (s[2] & 0x3F);
+    return 3;
+}
+
+void ui_from_utf8(const char *s, char *out, uint8_t max)
+{
+    uint16_t cp, g;
+    uint8_t n = 0;
+    while (*s && n + 3 <= max) {
+        s += ui_utf8_char(s, &cp);
+        if (cp < 0x80) {
+            out[n++] = (char)cp;
+            continue;
+        }
+        g = font_find(cp);
+        if (g == FONT_NONE) {
+            out[n++] = '?';
+        } else {
+            out[n++] = FONT_LEAD(g);
+            out[n++] = FONT_TRAIL(g);
+        }
+    }
+    out[n] = 0;
+}

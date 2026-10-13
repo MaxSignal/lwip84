@@ -114,6 +114,13 @@ uint16_t font_find(uint16_t cp)
     return FONT_NONE;
 }
 
+uint8_t font_kind(uint16_t g)
+{
+    uint8_t k;
+    font_read(kind_off + (g >> 2), &k, 1);
+    return (k >> ((g & 3) * 2)) & 3;
+}
+
 uint8_t font_glyph(uint16_t g, uint8_t rows[8])
 {
     uint8_t k;

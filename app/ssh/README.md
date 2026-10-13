@@ -39,6 +39,11 @@ the [main README](../../README.md#typing)).
   as the server's `wcwidth` counts them; accented Latin letters lose their
   accents; the rest is `?` (two for characters outside the BMP). Writing
   over half of a wide character blanks the other half.
+- other languages are typed with the input methods (2nd+ALPHA, see the
+  [main README](../../README.md#other-languages)); what is being typed shows
+  in the status line and is sent as UTF-8 when it is put in. Cyrillic,
+  Greek, Arabic and Devanagari come back as `?`: their glyphs are 8 pixels
+  wide and a terminal column is 4.
 
 The terminal is 24x7 with the external font (8-pixel rows, so that the
 glyphs fit) and 24x9 without it; the size is sent with the pty request.

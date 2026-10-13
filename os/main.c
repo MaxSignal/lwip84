@@ -35,7 +35,7 @@ uint8_t ssh_enter(void);
 uint8_t ssh_key(uint8_t k);
 void ssh_poll(void);
 
-enum { A_CONSOLE, A_MENU, A_WEB, A_SSH };
+enum { A_CONSOLE, A_MENU, A_WEB, A_SSH, A_SETUP };
 static uint8_t app;
 
 #define DEMO_HOST "example.com"
@@ -172,6 +172,7 @@ static void menu_draw(void)
     ui_text(1, " 1  Web browser");
     ui_text(2, " 2  SSH client");
     ui_text(3, " 3  Network console");
+    ui_text(4, " 4  Input languages");
     ui_text(5, " 2nd+ON  power off");
     {
         char b[CON_COLS + 1];
@@ -195,7 +196,10 @@ static void app_switch(uint8_t a)
     }
     if (a == A_MENU)
         menu_draw();
-    else if (a == A_CONSOLE)
+    else if (a == A_SETUP) {
+        in_setup_draw();
+        lcd_update();
+    } else if (a == A_CONSOLE)
         con_refresh();
 }
 
@@ -212,6 +216,8 @@ static uint8_t app_key(uint8_t k)
             app_switch(A_SSH);
         else if (k == K_3 || k == K_CLEAR || k == K_MODE)
             app_switch(A_CONSOLE);
+        else if (k == K_4)
+            app_switch(A_SETUP);
         else if (k == K_2ND)
             in_char(k);
         return 1;
@@ -222,6 +228,14 @@ static uint8_t app_key(uint8_t k)
     case A_SSH:
         if (!ssh_key(k))
             app_switch(A_MENU);
+        break;
+    case A_SETUP:
+        if (!in_setup_key(k))
+            app_switch(A_MENU);
+        else {
+            in_setup_draw();
+            lcd_update();
+        }
         break;
     default:
         if (k == K_APPS) {

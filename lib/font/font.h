@@ -27,7 +27,11 @@ uint16_t font_find(uint16_t cp);        /* glyph of a code point or FONT_NONE */
 /* rows of a glyph (bit 7 = leftmost pixel); returns its width in pixels:
  * 4 or 8, 0 for a mark drawn over the glyph before it */
 uint8_t font_glyph(uint16_t g, uint8_t rows[8]);
-uint8_t font_is_rtl(uint16_t g);        /* Arabic: written right to left */
+uint8_t font_is_rtl(uint16_t g);
+#define FONT_HALF 0
+#define FONT_FULL 1
+#define FONT_MARK 2
+uint8_t font_kind(uint16_t g);          /* FONT_HALF, FONT_FULL or FONT_MARK */        /* Arabic: written right to left */
 
 #ifdef HTML_HOST
 void far_read(uint8_t page, uint16_t addr, void *dst, uint16_t len);
