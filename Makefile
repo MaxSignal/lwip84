@@ -133,7 +133,7 @@ $(B)/lwip84.ihx: $(B)/banked.stamp
 FONT ?= fonts/fonts.txt
 ifneq ($(FONT),)
 FONT_BIN = $(B)/font.bin
-FONT_ARG = --data 08:$(FONT_BIN)
+FONT_ARG = --data 20:$(FONT_BIN)
 $(FONT_BIN): $(FONT) $(wildcard fonts/*/*) tools/mkfont84.py
 	@mkdir -p $(B)
 	$(PY) tools/mkfont84.py $< $@

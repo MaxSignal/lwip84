@@ -10,7 +10,7 @@
 #define FONT_H
 #include <stdint.h>
 
-#define FONT_PAGE 0x08          /* first flash page of the font */
+#define FONT_PAGE 0x20          /* first flash page of the font */
 #define FONT_NONE 0xFFFFu
 
 #define FONT_IS_LEAD(c) ((uint8_t)((uint8_t)(c) - 1) < 0x1F || (uint8_t)(c) == 0x7F || \

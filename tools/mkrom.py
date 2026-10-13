@@ -75,6 +75,11 @@ def main():
         for i in range((len(blob) + 0x3FFF) >> 14):
             used[page + i] = min(0x4000, len(blob) - i * 0x4000)
         rom[fa:fa + len(blob)] = blob
+    # the TI-84 Plus boot code (1.02) writes a page sent as 10h-1Fh to
+    # 30h-3Fh, and did not write 2Ch-32h (tools/pagetest.sh)
+    for p in sorted(used):
+        if 0x10 <= p <= 0x1F or (pages == 64 and 0x2C <= p <= 0x32):
+            sys.exit('mkrom: page %02X cannot be sent to the calculator' % p)
     open(dst, 'wb').write(rom)
     for p in sorted(used):
         print('page %02X: %5d bytes used' % (p, used[p]))

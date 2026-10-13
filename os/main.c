@@ -126,6 +126,32 @@ static void show_info(void)
         con_printf("gw %s\n", ip4addr_ntoa(netif_ip4_gw(net84_netif)));
     con_printf("dns %s\n", ipaddr_ntoa(dns_getserver(0)));
     con_printf("heap %u free, font %s\n", heap_free_bytes(), font_ok ? "ok" : "none");
+#ifdef TI84P_DEBUG
+    /* the font pages as they are on flash: first bytes and 16-bit sum of
+       each page, to compare with the ROM image (tools/pagesums.py) */
+    {
+        uint8_t pg, b[64], i;
+        uint16_t a, sum;
+        for (pg = FONT_PAGE; pg < FONT_PAGE + 11; pg++) {
+            sum = 0;
+            for (a = 0; a < 0x4000; a += sizeof(b)) {
+                far_read(pg, 0x4000 + a, b, sizeof(b));
+                for (i = 0; i < sizeof(b); i++)
+                    sum += b[i];
+            }
+            far_read(pg, 0x4000, b, 4);
+            con_printf("pg %02x %02x%02x%02x%02x %04x\n", pg, b[0], b[1], b[2], b[3], sum);
+        }
+        /* test marks ("PG", page; tools/pagetest.sh) on pages 08h-3Fh:
+           where=page it was sent as */
+        for (pg = 0x08; pg < 0x40; pg++) {
+            far_read(pg, 0x4000, b, 3);
+            if (b[0] == 'P' && b[1] == 'G')
+                con_printf("%02x=%02x ", pg, b[2]);
+        }
+        con_printf("marks\n");
+    }
+#endif
     if (usb_recoveries)
         con_printf("usb reconnected %u times\n", usb_recoveries);
 }

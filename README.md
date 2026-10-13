@@ -161,8 +161,11 @@ keeps the return information on a far stack. Constants named `*_bk` (font,
 tables) stay in flash next to the function that uses them. The boot code
 does not run code on pages 08h-29h (08h-69h on the SE), so code is on pages
 01-07 and 33-39 plus the crypto page 3B (73-79 and 7B on the SE). Page 3Ah
-(7Ah) is left alone, the boot code keeps the OS header there. Pages 08h-29h
-hold data: the external font from 08h on, the rest is free.
+(7Ah) is left alone, the boot code keeps the OS header there. The boot code
+of the TI-84 Plus writes a page sent as 10h-1Fh to 30h-3Fh and did not take
+2Ch-32h (`tools/pagetest.sh` sends marked pages, the debug build's Y= shows
+where they landed), so data is on pages 08h-0Fh and 20h-2Bh: the external
+font on 20h-29h, the rest is free. `tools/mkrom.py` refuses the other pages.
 
 The six other RAM pages (96 KiB) are reached through `xram_read` /
 `xram_write` and hold the web page (64 KiB), the SSH scrollback (24 KiB),
@@ -217,7 +220,7 @@ than ChaCha20 (bytes and a table instead of 32-bit additions and rotations).
 ### External font
 
 Characters that cannot be shown in ASCII are drawn with bitmap fonts on the
-flash data pages (08h-11h, 148 KB). `fonts/fonts.txt` lists them in
+flash data pages (20h-29h, 148 KB). `fonts/fonts.txt` lists them in
 priority order:
 
 | Font | Scripts |
