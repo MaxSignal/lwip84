@@ -5,7 +5,8 @@
  * Only what is needed to talk to a server is done:
  *   - two cipher suites, TLS_AES_128_GCM_SHA256 (offered alone: AES is
  *     1.7 times as fast as ChaCha20 on the Z80) and
- *     TLS_CHACHA20_POLY1305_SHA256 as a fallback, and one group, X25519
+ *     TLS_CHACHA20_POLY1305_SHA256 as a fallback, and the group X25519
+ *     (and P-256 in the speed mode of kx84.c, for servers without X25519)
  *   - no certificate, CertificateVerify or Finished checks: the server's
  *     encrypted handshake is only hashed into the transcript.  The
  *     connection is encrypted but NOT authenticated (no protection against
@@ -249,20 +250,34 @@ static uint8_t is_ip_literal(const char *h)
 static void send_client_hello(struct tls84 *st)
 {
     static const uint8_t fixed_ext_bk[] = {
+#if KX_INSECURE_FAST
+        0x00, 0x0a, 0x00, 0x06, 0x00, 0x04, 0x00, 0x1d, 0x00, 0x17, /* groups: x25519, secp256r1 */
+#else
         0x00, 0x0a, 0x00, 0x04, 0x00, 0x02, 0x00, 0x1d,             /* groups: x25519 */
+#endif
         0x00, 0x0d, 0x00, 0x14, 0x00, 0x12,                         /* signature algorithms */
         0x04, 0x03, 0x08, 0x04, 0x04, 0x01, 0x05, 0x03, 0x08, 0x05,
         0x05, 0x01, 0x08, 0x06, 0x06, 0x01, 0x08, 0x07,
         0x00, 0x2b, 0x00, 0x03, 0x02, 0x03, 0x04,                   /* TLS 1.3 */
+#if KX_INSECURE_FAST
+        0x00, 0x33, 0x00, 0x6b, 0x00, 0x69, 0x00, 0x1d, 0x00, 0x20  /* key shares: x25519 */
+#else
         0x00, 0x33, 0x00, 0x26, 0x00, 0x24, 0x00, 0x1d, 0x00, 0x20  /* key share */
+#endif
     };
+#if KX_INSECURE_FAST
+    static const uint8_t p256_share_bk[4] = {0x00, 0x17, 0x00, 0x41};  /* then secp256r1 */
+#define P256_SHARE (4 + 65)
+#else
+#define P256_SHARE 0
+#endif
     static const uint8_t psk_modes_bk[6] = {0x00, 0x2d, 0x00, 0x02, 0x01, 0x01};
     uint8_t hl = is_ip_literal(st->host) ? 0 : (uint8_t)strlen(st->host);
     uint8_t psk = ticket_for(st->host);
     /* pre_shared_key data: identities (len, id len, id, age), binders (len, 32, binder) */
     uint16_t pk_data = psk ? 2 + 2 + tcache.tlen + 4 + 2 + 1 + 32 : 0;
     uint16_t psk_len = psk ? 6 + 4 + pk_data : 0;   /* + psk_key_exchange_modes */
-    uint16_t ext = sizeof(fixed_ext_bk) + 32 + (hl ? 9 + hl : 0) + psk_len;
+    uint16_t ext = sizeof(fixed_ext_bk) + 32 + P256_SHARE + (hl ? 9 + hl : 0) + psk_len;
     uint8_t aes_only = TLS_PREFER_AES && strcmp(chacha_host, st->host);
     uint16_t body = 2 + 32 + 33 + (aes_only ? 4 : 6) + 2 + 2 + ext;
     uint8_t *m = malloc(9 + body), *p;
@@ -305,6 +320,11 @@ static void send_client_hello(struct tls84 *st)
     p += sizeof(fixed_ext_bk);
     memcpy(p, kx_pub(), 32);
     p += 32;
+#if KX_INSECURE_FAST
+    memcpy(p, p256_share_bk, 4);
+    kx_p256_pub(p + 4);
+    p += P256_SHARE;
+#endif
     sha256_init(&st->th);
     if (psk) {
         uint8_t early[32], key[32];
@@ -536,10 +556,12 @@ static void stream_bytes(struct tls84 *st, const uint8_t *p, uint16_t n)
     st->zeros = n - 1 - (uint16_t)j;
 }
 
+static void kex_done(struct tls84 *st, uint8_t *shared);
+
 static void server_hello(struct tls84 *st)
 {
     static const uint8_t hrr_bk[8] = {0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11};
-    const uint8_t *p = st->acc, *key = NULL;
+    const uint8_t *p = st->acc, *key = NULL, *p256 = NULL;
     uint16_t n = st->acc_n, pos, end;
     uint32_t blen;
     sha256_ctx t;
@@ -574,11 +596,15 @@ static void server_hello(struct tls84 *st)
             break;
         if (type == 0x0033 && len == 36 && p[pos + 1] == 0x1d)
             key = p + pos + 4;
+#if KX_INSECURE_FAST
+        if (type == 0x0033 && len == 69 && p[pos + 1] == 0x17 && p[pos + 4] == 0x04)
+            p256 = p + pos + 5;             /* the x coordinate is the secret */
+#endif
         if (type == 0x0029 && len == 2 && st->psk_offered)
             st->psk_used = 1;               /* our ticket (identity 0) was taken */
         pos += len;
     }
-    if (!key) {
+    if (!key && !p256) {
         fail(st, "no X25519 key share");
         return;
     }
@@ -593,6 +619,12 @@ static void server_hello(struct tls84 *st)
     sha256_update(&st->th, p, end);
     memcpy(&t, &st->th, sizeof(t));
     sha256_final(&t, st->c_hs);
+    if (p256) {
+        uint8_t shared[32];
+        memcpy(shared, p256, 32);
+        kex_done(st, shared);
+        return;
+    }
     st->kex = malloc(sizeof(x25519_ctx));
     if (!st->kex) {
         fail(st, "no memory");
@@ -602,13 +634,11 @@ static void server_hello(struct tls84 *st)
     st->phase = P_KEX;
 }
 
-static void kex_done(struct tls84 *st)
+/* the handshake keys from the shared secret (cleared) */
+static void kex_done(struct tls84 *st, uint8_t *shared)
 {
+    uint8_t hs[32], s_hs[32];
     dbg_printf("tls: +%lu kex\n", k_now_ms() - st->t_hello);
-    uint8_t shared[32], hs[32], s_hs[32];
-    x25519_result(st->kex, shared);
-    free(st->kex);
-    st->kex = NULL;
     hkdf_extract(st->derived, shared, hs);
     hkdf_expand_label(hs, "s hs traffic", st->c_hs, 32, s_hs, 32);
     hkdf_expand_label(hs, "c hs traffic", st->c_hs, 32, st->c_hs, 32);
@@ -1101,8 +1131,13 @@ void tls84_poll(void)
             if (kx_run(100))
                 send_client_hello(st);
         } else if (st->phase == P_KEX) {
-            if (kx_shared_step(st->kex, 100))
-                kex_done(st);
+            if (kx_shared_step(st->kex, 100)) {
+                uint8_t shared[32];
+                x25519_result(st->kex, shared);
+                free(st->kex);
+                st->kex = NULL;
+                kex_done(st, shared);
+            }
         } else if (!st->rx && !st->app && st->eof != 1) {
             continue;
         }

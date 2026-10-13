@@ -71,8 +71,9 @@ The browser app can also bring programs and appvars into TI-OS
 Plus/84 Plus format) is not shown but kept in RAM page 85h (15.5 KiB at
 most). A link to a `.zip` is read as it arrives: each member that is such a
 file (stored or deflated, without a data descriptor) goes compressed to the
-page's text area in page 84h (11 KiB at most), is inflated into page 85h
-(`lib/inflate`) and checked against its CRC-32; other members are skipped.
+page's text area in page 84h (11 KiB in all); other members are skipped.
+When the connection is closed and its memory free again, they are inflated
+into page 85h (`lib/inflate`) and checked against their CRC-32.
 The browser lists the programs and appvars (up to 16, a later one of the
 same name is not chosen) with TI-OS's free RAM; 0 chooses, ENTER ends the
 app, and after TI-OS has its RAM back `launch.s` makes each chosen variable

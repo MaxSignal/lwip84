@@ -3,8 +3,9 @@
  *
  * A TI file (.8xp, .8xv, .8xg) is kept as it arrives in RAM page 85h.  A
  * ZIP is read as it arrives: the members that are TI files go compressed
- * to the browser's text area (page 84h) and are inflated from there into
- * page 85h one by one (lib/inflate); everything else is skipped.  Then
+ * to the browser's text area (page 84h), everything else is skipped.  At
+ * the end, with the connection closed and its memory free again, they are
+ * inflated into page 85h (lib/inflate) and checked.  Then
  * the variables in those files are listed to choose from; the chosen ones
  * go into the table platform/tios/launch.s works from after the app. */
 #include <string.h>
@@ -22,7 +23,7 @@ extern uint8_t __app_save[];            /* platform/tios/crt0.s */
 #define OUT 0x4100UL                    /* the TI files */
 #define OUT_END 0x7F00UL
 #define NAMES 0x7F00UL                  /* member names, 32 bytes each */
-#define TMP 0x0000UL                    /* page 84h: one compressed member */
+#define TMP 0x0000UL                    /* page 84h: the compressed members */
 #define TMP_MAX 0x2C00u
 #define FILES 8
 #define CANDS 16
@@ -30,7 +31,18 @@ extern uint8_t __app_save[];            /* platform/tios/crt0.s */
 static uint8_t zip, bad, nfiles, ncand, cur, top;
 static uint16_t n_out;                  /* bytes in OUT */
 static uint16_t f_at[FILES], f_len[FILES];   /* in page 85h at 4000h */
-static uint8_t skipped, damaged;        /* members left out: too big etc., CRC */
+static uint8_t f_member[FILES];
+static uint8_t left_out;                /* members: too big, damaged, no memory */
+
+/* the members kept in TMP */
+struct member {
+    uint16_t off, csize, usize;
+    uint32_t crc;
+    uint8_t method;
+};
+static struct member members[FILES];
+static uint8_t nmembers;
+static uint16_t tmp_used;
 
 struct cand {
     uint8_t type, name[8];
@@ -79,8 +91,8 @@ uint8_t tidl_kind(const char *url)
 void tidl_begin(uint8_t is_zip)
 {
     zip = is_zip;
-    bad = nfiles = ncand = cur = top = skipped = damaged = 0;
-    n_out = 0;
+    bad = nfiles = ncand = cur = top = left_out = nmembers = 0;
+    n_out = tmp_used = 0;
     zst = hn = 0;
     if (zip) {
         /* the page's text area holds the members: no page any more */
@@ -101,31 +113,35 @@ static uint16_t u16(const uint8_t *p)
     return p[0] | (uint16_t)p[1] << 8;
 }
 
-/* a member is complete in TMP: into OUT */
-static void member_done(void)
+/* member k from TMP into OUT */
+static void inflate_member(uint8_t k)
 {
+    struct member *m = &members[k];
     uint16_t n = 0;
     int8_t r = INFLATE_OK;
     uint32_t dst = OUT + n_out;
-    uint16_t room = (uint16_t)(OUT_END - dst);
-    if (method == 0) {
+    if (m->usize > OUT_END - dst) {
+        left_out++;
+        return;
+    }
+    if (m->method == 0) {
         uint8_t b[32];
-        uint16_t k;
-        for (n = 0; n < (uint16_t)csize; n += k) {
-            k = (uint16_t)csize - n > sizeof(b) ? sizeof(b) : (uint16_t)csize - n;
-            xram_read(TMP + n, b, k);
-            xram_write(dst + n, b, k);
+        uint16_t c;
+        for (n = 0; n < m->csize; n += c) {
+            c = m->csize - n > sizeof(b) ? sizeof(b) : m->csize - n;
+            xram_read(TMP + m->off + n, b, c);
+            xram_write(dst + n, b, c);
         }
     } else {
-        r = inflate_xram(TMP, (uint16_t)csize, dst, room, &n);
+        r = inflate_xram(TMP + m->off, m->csize, dst, m->usize, &n);
     }
-    if (r || n != usize || crc32_xram(dst, n) != crc) {
-        damaged++;
+    if (r || n != m->usize || crc32_xram(dst, n) != m->crc) {
+        left_out++;
         return;
     }
     f_at[nfiles] = (uint16_t)dst;
     f_len[nfiles] = n;
-    xram_write(NAMES + (uint16_t)nfiles * 32, zname, 32);
+    f_member[nfiles] = k;
     nfiles++;
     n_out += n;
 }
@@ -172,10 +188,10 @@ static void zip_feed(const uint8_t *p, uint16_t n)
             if (got == nlen) {
                 uint8_t l = nlen < sizeof(zname) ? (uint8_t)nlen : (uint8_t)(sizeof(zname) - 1);
                 want = is_ti(zname, l) && (method == 0 || method == 8);
-                if (want && (csize > TMP_MAX || usize > OUT_END - OUT - n_out ||
-                             nfiles == FILES || usize < 57)) {
+                if (want && (csize > TMP_MAX - tmp_used || usize > OUT_END - OUT ||
+                             nmembers == FILES || usize < 57)) {
                     want = 0;
-                    skipped++;
+                    left_out++;
                 }
                 got = 0;
                 zst = 2;
@@ -196,15 +212,24 @@ static void zip_feed(const uint8_t *p, uint16_t n)
         if (zst == 3) {                 /* data */
             uint16_t k = left < n ? (uint16_t)left : n;
             if (want)
-                xram_write(TMP + got, p, k);
+                xram_write(TMP + tmp_used + got, p, k);
             got += k;
             left -= k;
             p += k;
             n -= k;
             if (left)
                 continue;
-            if (want)
-                member_done();
+            if (want) {
+                struct member *m = &members[nmembers];
+                m->off = tmp_used;
+                m->csize = (uint16_t)csize;
+                m->usize = (uint16_t)usize;
+                m->crc = crc;
+                m->method = (uint8_t)method;
+                xram_write(NAMES + (uint16_t)nmembers * 32, zname, 32);
+                nmembers++;
+                tmp_used += (uint16_t)csize;
+            }
             zst = 0;
         }
     }
@@ -273,8 +298,9 @@ void tidl_end(void)
         f_at[0] = (uint16_t)OUT;
         f_len[0] = n_out;
         nfiles = bad ? 0 : 1;
-        zname[0] = 0;
     }
+    for (k = 0; k < nmembers; k++)
+        inflate_member(k);
     for (k = 0; k < nfiles; k++)
         ti_file(k);
 }
@@ -305,7 +331,10 @@ void tidl_draw(const char *url)
     uint8_t i, k;
     const char *name = strrchr(url, '/');
     ui_clear();
-    snprintf(b, sizeof(b), "%s", name ? name + 1 : url);
+    if (left_out)
+        snprintf(b, sizeof(b), "%u left out: %s", (unsigned)left_out, name ? name + 1 : url);
+    else
+        snprintf(b, sizeof(b), "%s", name ? name + 1 : url);
     ui_status(b);
     if (!ncand) {
         ui_text(1, bad == 1 ? "too big: 15872 bytes at" :
@@ -313,10 +342,8 @@ void tidl_draw(const char *url)
         ui_text(2, bad == 1 ? "most" : bad == 2 ? "after the data: cannot" : "it that fits");
         if (bad == 2)
             ui_text(3, "read it here");
-        if (skipped || damaged) {
-            snprintf(b, sizeof(b), "%u too big, %u damaged", (unsigned)skipped, (unsigned)damaged);
-            ui_text(5, b);
-        }
+        if (left_out)
+            ui_text(5, "(too big or damaged)");
         ui_text(8, "CLEAR: back");
         lcd_update();
         return;
@@ -340,7 +367,7 @@ void tidl_draw(const char *url)
     }
     if (zip) {                          /* where the one at the cursor is from */
         char z[32];
-        xram_read(NAMES + (uint16_t)cands[cur].file * 32, z, 32);
+        xram_read(NAMES + (uint16_t)f_member[cands[cur].file] * 32, z, 32);
         z[COLS] = 0;
         ui_text(5, z);
     }

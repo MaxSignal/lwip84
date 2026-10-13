@@ -135,6 +135,8 @@ This is an experiment tuned for speed; **the connections are not secure**:
 - TLS: no certificate, CertificateVerify or Finished checks, received
   record tags are not checked, and the X25519 private key is 1
   (`KX_INSECURE_FAST`), so anybody who records the traffic can decrypt it.
+  The same holds for P-256, which is offered too for servers without
+  X25519 (www.ticalc.org): with private key 1 it needs no computation.
 - SSH: the host key and its signature are not checked, received MACs are
   not verified.
 - Random numbers come from xorshift32 (`RNG_INSECURE_FAST`).
@@ -266,8 +268,8 @@ Received data stays in lwIP's pbufs until it is read, and the TCP window
 opens as it is read. Events come from the main loop, never from inside
 lwIP.
 
-TLS 1.3 uses X25519 and `TLS_AES_128_GCM_SHA256`, which every TLS 1.3
-server must support; a host that refuses it gets
+TLS 1.3 uses X25519 (or P-256 where a server has no X25519) and
+`TLS_AES_128_GCM_SHA256`, which every TLS 1.3 server must support; a host that refuses it gets
 `TLS_CHACHA20_POLY1305_SHA256` on the next attempt. Records are decrypted
 in place as a stream, so 16 KiB records need no 16 KiB buffer. Session
 tickets are kept for the last host and used for PSK resumption. No
