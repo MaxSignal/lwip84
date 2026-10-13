@@ -166,11 +166,13 @@ jobs:
             echo "| \`lwip84-ti84plusse.8xu\` | OS upgrade for the TI-84 Plus Silver Edition |"
             echo "| \`*-48k.8xu\` | for the later calculators with 48 KiB of RAM (smaller buffers) |"
             echo "| \`lwip84-browser.8xk\`, \`lwip84-ssh.8xk\` | TI-OS applications (TI-84 Plus, 128 KiB of RAM) |"
-            echo "| \`*-debug.8xu\` | debug builds (USB/driver log on the LCD) |"
-            echo "| \`*.rom\` | flash images for emulators |"
             echo
             echo "Send the .8xu from boot mode (see README.md). It replaces TI-OS;"
-            echo "reinstall TI-OS the same way to go back."
+            echo "reinstall TI-OS the same way to go back. The .8xk are sent to"
+            echo "TI-OS like any app (see platform/README.md)."
+            echo
+            echo "Debug builds, flash images for emulators and SHA256SUMS are in"
+            echo "the artifact of the workflow run."
             echo
             if [ -n "$prev" ]; then
               echo "### Changes since ${prev}"
@@ -183,7 +185,9 @@ jobs:
             git log --no-merges --format='- %s (%h)' $range
           } > notes.md
           cat notes.md
-          gh release create "$tag" dist/* \
+          # only the signed release files: the OS upgrades and the apps
+          files=$(ls dist/*.8xu dist/*.8xk | grep -v -- '-debug\.')
+          gh release create "$tag" $files \
             --target "$GITHUB_SHA" \
             --title "lwIP-84+ build ${GITHUB_RUN_NUMBER} (${short})" \
             --notes-file notes.md
