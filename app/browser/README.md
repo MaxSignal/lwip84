@@ -1,7 +1,8 @@
 # Web browser
 
 A text web browser for lwIP-84+: HTTP/1.0 and HTTPS with its own HTML
-renderer (no CSS, no JavaScript), forms and search. **APPS, 1** opens it.
+renderer (no CSS, no JavaScript), forms and search. **APPS, 1** opens it;
+in TI-OS it is the app `lwIPweb` ([platform/](../../platform/README.md)).
 
 | English | 日本語 | 中文 | 한국어 |
 |:-:|:-:|:-:|:-:|

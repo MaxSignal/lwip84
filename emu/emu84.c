@@ -8,6 +8,8 @@
  *   -s FILE     read commands from FILE instead of stdin
  *   -se         TI-84 Plus SE (2 MiB flash) instead of TI-84 Plus (1 MiB)
  *   -r48        48 KiB of RAM (later revisions): pages 2-7 are one page
+ *   -app        rom.bin is a TI-OS application (tools/mkapp84.py), started by
+ *               a fake TI-OS that checks its RAM when the app goes back
  *   -d          print OS debug output (port FEh, DEBUG builds only)
  *   -u          attach the virtual USB host (see usb.c)
  *   -n SOCKET   with -u: bridge NCM frames to passt's UNIX socket SOCKET
@@ -93,7 +95,16 @@ static void check_fetch(uint16_t addr)
     default: page = ti.mem_mode ? ti.bank_b : (0x80 | ti.ram_c000); break;
     }
     (void)map_addr(addr, &fl);
-    if (!fl) {
+    if (!fl && ti.app) {
+        /* TI-OS allows RAM addresses 4000h-83FFh (ports 25h/26h): page 1,
+         * and the first KiB of page 2 */
+        uint8_t rp = page & 7;
+        if (rp == 1 || (rp == 2 && (addr & 0x3FFF) < 0x400))
+            return;
+        fprintf(stderr, "emu84: FAULT: opcode fetch from RAM page %02X at %04X "
+                "(outside TI-OS's limits)\n", page, addr);
+        ti.fault = 1;
+    } else if (!fl) {
         fprintf(stderr, "emu84: FAULT: opcode fetch from RAM page %02X at %04X\n", page, addr);
         ti.fault = 1;
     } else if (page >= ti.exec_lo && page <= ti.exec_hi) {
@@ -480,6 +491,21 @@ static void port_out(uint8_t p, uint8_t v)
         }
         break;
     }
+    case 0xFD:
+        /* the fake TI-OS of -app: the app went back (B_JUMP) */
+        if (ti.app) {
+            int bad = -1;
+            /* below TI-OS's SP (FFEEh) the way back made calls */
+            for (int i = 0; i < 2 * 0x4000 && bad < 0; i++)
+                if (ti.ram[i] != ti.app_ram[i] && !(i >= 0x3FE0 && i < 0x3FEE))
+                    bad = i;
+            fprintf(stderr, "emu84: app exit to TI-OS: SP %04X, port 03 %02X, "
+                    "RAM %s", (unsigned)ti.cpu.sp, ti.int_mask, bad < 0 ? "restored\n" : "");
+            if (bad >= 0)
+                fprintf(stderr, "differs at page %d offset %04X\n", bad >> 14, bad & 0x3FFF);
+            ti.fault = 1;
+        }
+        break;
     case 0xFE:
         if (ti.debug_out) {
             fputc(v, stdout);
@@ -700,6 +726,8 @@ int main(int argc, char **argv)
             se = 1;
         else if (!strcmp(argv[i], "-r48"))
             ti.ram48 = 1;
+        else if (!strcmp(argv[i], "-app"))
+            ti.app = 1;
         else if (!strcmp(argv[i], "-d"))
             ti.debug_out = 1;
         else if (!strcmp(argv[i], "-u"))
@@ -710,7 +738,7 @@ int main(int argc, char **argv)
             rom = argv[i];
     }
     if (!rom) {
-        fprintf(stderr, "usage: emu84 [-s script] [-se] [-r48] [-d] [-u [-n tap]] rom.bin\n");
+        fprintf(stderr, "usage: emu84 [-s script] [-se] [-r48] [-app] [-d] [-u [-n tap]] rom.bin\n");
         return 2;
     }
     ti.flash_pages = se ? 128 : 64;
@@ -721,8 +749,39 @@ int main(int argc, char **argv)
         perror(rom);
         return 2;
     }
-    size_t n = fread(ti.flash, 1, ti.flash_pages * 0x4000, f);
-    fclose(f);
+    size_t n;
+    if (ti.app) {
+        /* a TI-OS application (tools/mkapp84.py): page n of it on flash page
+         * APP_BASE - n as TI-OS installs it, and a fake TI-OS on page 0
+         * that starts it at 4080h; B_JUMP back ends the run (port FDh) */
+        enum { APP_BASE = 0x1C };
+        static uint8_t app[16 * 0x4000];
+        static const uint8_t start[] = {
+            0xF3, 0x31, 0xF0, 0xFF, 0x3E, 0x81, 0xD3, 0x07, 0xAF, 0xD3, 0x05,
+            0x3E, APP_BASE, 0xD3, 0x06, 0xED, 0x56, 0x3E, 0x0B, 0xD3, 0x03,
+            0xCD, 0x80, 0x40, 0x76, 0x18, 0xFD};
+        static const uint8_t isr[] = {
+            0xF5, 0xAF, 0xD3, 0x03, 0x3E, 0x0B, 0xD3, 0x03, 0xF1, 0xFB, 0xC9};
+        static const uint8_t bjump[] = {0xD3, 0xFD, 0x76, 0x18, 0xFD};
+        n = fread(app, 1, sizeof(app), f);
+        fclose(f);
+        for (size_t p = 0; p * 0x4000 < n; p++)
+            memcpy(ti.flash + (APP_BASE - p) * 0x4000, app + p * 0x4000,
+                   n - p * 0x4000 < 0x4000 ? n - p * 0x4000 : 0x4000);
+        memcpy(ti.flash, start, sizeof(start));
+        memcpy(ti.flash + 0x38, isr, sizeof(isr));
+        memcpy(ti.flash + 0x50, bjump, sizeof(bjump));
+        /* TI-OS's RAM: a pattern, and the return address of the call */
+        for (int i = 0; i < 2 * 0x4000; i++)
+            ti.ram[i] = (uint8_t)(i * 7 + (i >> 8) + 3);
+        ti.ram[0x3FEE] = 0x18;
+        ti.ram[0x3FEF] = 0x00;
+        memcpy(ti.app_ram, ti.ram, sizeof(ti.app_ram));
+        n = 0x4000;
+    } else {
+        n = fread(ti.flash, 1, ti.flash_pages * 0x4000, f);
+        fclose(f);
+    }
     if (n < 0x4000) {
         fprintf(stderr, "emu84: %s too small\n", rom);
         return 2;
@@ -737,6 +796,10 @@ int main(int argc, char **argv)
     ti.bank_b = 0x81;
     ti.exec_lo = 0x08;                  /* values left by the retail boot code */
     ti.exec_hi = se ? 0x69 : 0x29;
+    if (ti.app) {                       /* TI-OS lets apps run anywhere */
+        ti.exec_lo = 0xFF;
+        ti.exec_hi = 0x00;
+    }
     ti.mem_mode = 0;
     ti.timer_speed = 6;
     ti.key_groups = 0xFF;

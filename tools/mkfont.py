@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate os/font3x5.c: a 3x5 pixel font (4x6 cell) for ASCII 32..126.
+"""Generate kernel/font3x5.c: a 3x5 pixel font (4x6 cell) for ASCII 32..126.
 Each glyph is 5 rows of 3 bits (bit 2 = left column)."""
 G = {
 ' ':"... ... ... ... ...", '!':".#. .#. .#. ... .#.", '"':"#.# #.# ... ... ...",

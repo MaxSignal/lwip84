@@ -1,4 +1,4 @@
-/* input.h - keypad text input and a one-line editor (os/input.c) */
+/* input.h - keypad text input and a one-line editor (kernel/input.c) */
 #ifndef TI84P_INPUT_H
 #define TI84P_INPUT_H
 #include <stdint.h>

@@ -76,7 +76,11 @@ void usb_isr(void);
 /* endpoint 0 packet size: 8 works with any FIFO size the controller has */
 #define EP0_SIZE 8
 #define USB_NTB_OUT_MAX 2048            /* host -> calculator */
+#ifdef TI84P_APP
+#define USB_NTB_IN_MAX  1600            /* calculator -> host: one frame */
+#else
 #define USB_NTB_IN_MAX  2048            /* calculator -> host */
+#endif
 
 /* event log filled by the interrupt-driven core, printed by usb_log_print() */
 enum { USB_LOG_SETUP = 1, USB_LOG_RESET, USB_LOG_ADDRESS, USB_LOG_VBUS_LOST };

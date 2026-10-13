@@ -1,9 +1,15 @@
-# lwIP-84+ : lwIP on the TI-84 Plus / Plus SE (Z80) as a standalone OS.
+# lwIP-84+ : lwIP on the TI-84 Plus / Plus SE (Z80), as a standalone OS or
+# as TI-OS applications.
 #
 #   make            release OS image    (build-84p/lwip84.rom, build-84p/lwip84.8xu)
 #   make DEBUG=1    debug build with emulator console output (build-debug-84p/)
 #   make MODEL=84pse  TI-84 Plus Silver Edition image
 #   make emu        build the test emulator (build-84p/emu84)
+#   make PLATFORM=tios APP=browser   TI-OS app (build-tios-browser/lwip84.8xk);
+#                   APP=ssh for the SSH client
+#
+# kernel/ is shared; platform/os/ and platform/tios/ hold what differs
+# (start-up, far calls, main).
 
 # SDCC 4.4.0 is required: 4.5.0 miscompiles variable shifts such as
 # (8 >> i) inside larger functions (shift count lost).
@@ -54,18 +60,44 @@ ifeq ($(RAM48),1)
 B      := $(B)-48k
 DEFS   += -DTI84P_RAM48
 endif
+# PLATFORM=tios: a TI-OS Flash application for the TI-84 Plus with 128 KiB
+# of RAM (platform/tios/): logical pages 1.., the common code and the
+# constants copied to RAM at 8184h, the buffers of the 48 KiB build, no
+# font.  APP=browser or APP=ssh: one application each, for RAM.
+PLATFORM ?= os
+ifeq ($(PLATFORM),tios)
+APP    ?= browser
+B      := $(subst -$(MODEL),-tios-$(APP),$(B))
+DEFS   += -DTI84P_APP -DTI84P_RAM48
+ifeq ($(APP),ssh)
+DEFS   += -DTIOS_SSH
+APP_NAME = lwIPssh
+else
+DEFS   += -DTIOS_BROWSER
+APP_NAME = lwIPweb
+endif
+BANKS   = 2-F
+FIXED   = 01
+FONT    =
+BANKER_OPT = --call-thunks
+LINK_CODE = 0x8184
+else
+LINK_CODE = 0x0080
+endif
 
 CFLAGS  = -mz80 --std-sdcc11 --opt-code-size --constseg CONST $(DEFS) -DDICT_PAGE=0x$(DICT_PAGE) \
           -DFE_ASM '-D__attribute__(x)=' \
-          -I include -I os -I lib/net -I lib/crypto -I lib/font -I lib/ime \
+          -I include -I kernel -I lib/net -I lib/crypto -I lib/font -I lib/ime \
           -I app/browser -I app/ssh -I app/console -I $(LWIP_SRC)/include
 
-# modules that must stay in page 0 (interrupt path, runtime)
-COMMON_C = os/isr.c os/far.c os/usb.c os/kbd.c
-COMMON_S = os/crt0.s os/farcall.s os/usb_ll.s
-# everything else is placed in flash pages 1.. by tools/banker.py:
-# the OS (os/), the library (lib/) and the applications (app/)
-BANKED_C = os/main.c os/input.c os/ui.c os/lcd.c os/fmt.c os/usb_ctl.c os/ncm.c os/heap.c \
+# modules that must stay in page 0 (interrupt path, runtime; in the TI-OS
+# app: in RAM)
+COMMON_C = kernel/isr.c kernel/far.c kernel/usb.c kernel/kbd.c
+COMMON_S = platform/$(PLATFORM)/crt0.s platform/$(PLATFORM)/farcall.s kernel/usb_ll.s
+# everything else is placed in flash pages 1.. by tools/banker.py: the
+# kernel (kernel/), the library (lib/) and the applications (app/)
+BANKED_C = platform/$(PLATFORM)/main.c kernel/power.c \
+           kernel/input.c kernel/ui.c kernel/lcd.c kernel/fmt.c kernel/usb_ctl.c kernel/ncm.c kernel/heap.c \
            lib/net/sys_arch.c lib/net/time84.c lib/net/netif_ncm.c lib/net/net84.c \
            lib/net/sock84.c lib/net/tls84.c lib/net/kx84.c lib/font/font.c lib/ime/ime.c lib/ime/dict.c \
            lib/crypto/sha256.c lib/crypto/chacha.c lib/crypto/aes.c lib/crypto/x25519.c \
@@ -85,15 +117,29 @@ LWIP_C = $(addprefix $(LWIP_SRC)/, \
            core/ipv4/ip4_addr.c netif/ethernet.c core/altcp.c core/altcp_tcp.c \
            core/altcp_alloc.c apps/sntp/sntp.c)
 
+ifeq ($(PLATFORM),tios)
+# a TI-OS app: one application, no console
+BANKED_C := $(filter-out app/console/%,$(BANKED_C))
+ifeq ($(APP),ssh)
+BANKED_C := $(filter-out app/browser/%,$(BANKED_C))
+else
+BANKED_C := $(filter-out app/ssh/%,$(BANKED_C))
+endif
+endif
+
 COMMON_ASM = $(patsubst %.c,$(B)/asm/%.asm,$(COMMON_C)) $(patsubst %.s,$(B)/asm/%.asm,$(COMMON_S))
 BANKED_ASM = $(patsubst $(LWIP_SRC)/%.c,$(B)/asm/lwip/%.asm,$(filter $(LWIP_SRC)/%,$(BANKED_C))) \
              $(patsubst %.c,$(B)/asm/%.asm,$(filter-out $(LWIP_SRC)/%,$(BANKED_C))) \
              $(B)/asm/lwip/core/tcp_in.asm
 
+ifeq ($(PLATFORM),tios)
+all: $(B)/lwip84.8xk
+else
 all: $(B)/lwip84.rom $(B)/lwip84.8xu
+endif
 
 # no automatic dependencies with SDCC: every module depends on all port headers
-HDRS = $(wildcard include/*.h include/*/*.h os/*.h lib/*/*.h app/*/*.h)
+HDRS = $(wildcard include/*.h include/*/*.h kernel/*.h lib/*/*.h app/*/*.h)
 
 $(B)/asm/%.asm: %.c $(HDRS)
 	@mkdir -p $(dir $@)
@@ -128,15 +174,38 @@ $(FIXED_ASM): tools/gen_fe_z80.py tools/gen_sha256_z80.py tools/gen_poly1305_z80
 $(B)/banked.stamp: $(COMMON_ASM) $(BANKED_ASM) $(FIXED_ASM) tools/banker.py tools/check_iy.py
 	$(PY) tools/check_iy.py $(COMMON_ASM) $(BANKED_ASM)
 	rm -rf $(B)/bk && mkdir -p $(B)/bk
-	$(PY) tools/banker.py --outdir $(B)/bk --thunks $(B)/bk/thunks.s --map $(B)/banks.txt --ldargs $(B)/banks.lnk --banks $(BANKS) \
+	$(PY) tools/banker.py $(BANKER_OPT) --outdir $(B)/bk --thunks $(B)/bk/thunks.s --map $(B)/banks.txt --ldargs $(B)/banks.lnk --banks $(BANKS) \
 	    $(addprefix common:,$(COMMON_ASM)) $(addprefix banked:,$(BANKED_ASM)) fixed@$(FIXED):$(FIXED_ASM)
 	cd $(B)/bk && for f in *.asm *.s; do $(AS) -plosgff $${f%.*}.rel $$f || exit 1; done
+ifeq ($(PLATFORM),tios)
+	$(AS) -plosgff $(B)/bk/launch.rel platform/tios/launch.s
+endif
 	touch $@
 
+ifeq ($(PLATFORM),tios)
+# the data follows the RAM image: link once to find where it ends
 $(B)/lwip84.ihx: $(B)/banked.stamp
-	cd $(B)/bk && $(LD) -n -m -w -i -b _CODE=0x0080 -b _DATA=0x8000 \
+	cd $(B)/bk && $(LD) -n -m -w -i -b _CODE=$(LINK_CODE) -b _DATA=0xC000 \
 	    $$(cat ../banks.lnk) \
 	    -k $(SDCCLIB) -l z80 ../lwip84.ihx crt0.rel $$(ls *.rel | grep -v '^crt0.rel$$')
+	cd $(B)/bk && end=$$(python3 -c "import re;m=open('../lwip84.map').read();f=lambda n:int(re.search(r'\b([0-9A-F]{8})\s+'+n+r'\b',m).group(1),16);print(hex(f('s__GSFINAL')+f('l__GSFINAL')))") && \
+	    $(LD) -n -m -w -i -b _CODE=$(LINK_CODE) -b _DATA=$$end \
+	    $$(cat ../banks.lnk) \
+	    -k $(SDCCLIB) -l z80 ../lwip84.ihx crt0.rel $$(ls *.rel | grep -v '^crt0.rel$$')
+
+$(B)/lwip84.bin: $(B)/lwip84.ihx tools/mkapp84.py
+	$(PY) tools/mkapp84.py --name $(APP_NAME) $< $(B)/lwip84.map $@
+	@grep -E "^_(CODE|CONST|HOME|GSINIT|GSFINAL|INITIALIZER|DATA|BSS|INITIALIZED|HEAP) " $(B)/lwip84.map | sort -u
+
+# signed with the "shareware" app key 0104 (built into rabbitsign)
+$(B)/lwip84.8xk: $(B)/lwip84.bin
+	rabbitsign -b -g -o $@ $<
+else
+$(B)/lwip84.ihx: $(B)/banked.stamp
+	cd $(B)/bk && $(LD) -n -m -w -i -b _CODE=$(LINK_CODE) -b _DATA=0x8000 \
+	    $$(cat ../banks.lnk) \
+	    -k $(SDCCLIB) -l z80 ../lwip84.ihx crt0.rel $$(ls *.rel | grep -v '^crt0.rel$$')
+endif
 
 # external font on the flash data pages (lib/font/font.h): the fonts listed in
 # FONT (fonts/fonts.txt); FONT= for none

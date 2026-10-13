@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """typekeys.py [--mode 1|A|a] TEXT... - emu84 "key" commands that type TEXT
-with os/input.c's keypad layout (ALPHA cycles 1 -> A -> a, 2nd = symbol).
+with kernel/input.c's keypad layout (ALPHA cycles 1 -> A -> a, 2nd = symbol).
 Prints the commands; the final mode is printed as a comment."""
 import sys
 

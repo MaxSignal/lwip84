@@ -43,7 +43,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .tools
-          key: ti84p-tools-sdcc${{ env.SDCC_VERSION }}-mktiupgrade${{ env.MKTIUPGRADE_REF }}
+          key: ti84p-tools-sdcc${{ env.SDCC_VERSION }}-mktiupgrade${{ env.MKTIUPGRADE_REF }}-rabbitsign
 
       - name: Install toolchain
         if: steps.cache.outputs.cache-hit != 'true'
@@ -61,6 +61,11 @@ jobs:
           make -C .tools/mktiupgrade-src mktiupgrade
           cp .tools/mktiupgrade-src/mktiupgrade .tools/bin/
           rm -rf .tools/mktiupgrade-src
+          # app signing (key 0104) for the TI-OS applications
+          git clone -q --depth 1 https://github.com/abbrev/rabbitsign .tools/rabbitsign-src
+          (cd .tools/rabbitsign-src && ./configure -q && make -s)
+          cp .tools/rabbitsign-src/src/rabbitsign .tools/bin/
+          rm -rf .tools/rabbitsign-src
 
       - name: Toolchain versions
         run: |
@@ -81,6 +86,11 @@ jobs:
         run: |
           make -j"$(nproc)" RAM48=1
           make -j"$(nproc)" RAM48=1 MODEL=84pse
+
+      - name: Build the TI-OS applications
+        run: |
+          make -j"$(nproc)" PLATFORM=tios APP=browser
+          make -j"$(nproc)" PLATFORM=tios APP=ssh
 
       - name: Build debug images
         run: |
@@ -126,6 +136,8 @@ jobs:
           cp build-84pse/lwip84.rom           dist/lwip84-ti84plusse.rom
           cp build-84p-48k/lwip84.8xu         dist/lwip84-ti84plus-48k.8xu
           cp build-84pse-48k/lwip84.8xu       dist/lwip84-ti84plusse-48k.8xu
+          cp build-tios-browser/lwip84.8xk    dist/lwip84-browser.8xk
+          cp build-tios-ssh/lwip84.8xk        dist/lwip84-ssh.8xk
           cp build-debug-84p/lwip84.8xu       dist/lwip84-ti84plus-debug.8xu
           cp build-debug-84pse/lwip84.8xu     dist/lwip84-ti84plusse-debug.8xu
           cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
@@ -153,6 +165,7 @@ jobs:
             echo "| \`lwip84-ti84plus.8xu\` | OS upgrade for the TI-84 Plus |"
             echo "| \`lwip84-ti84plusse.8xu\` | OS upgrade for the TI-84 Plus Silver Edition |"
             echo "| \`*-48k.8xu\` | for the later calculators with 48 KiB of RAM (smaller buffers) |"
+            echo "| \`lwip84-browser.8xk\`, \`lwip84-ssh.8xk\` | TI-OS applications (TI-84 Plus, 128 KiB of RAM) |"
             echo "| \`*-debug.8xu\` | debug builds (USB/driver log on the LCD) |"
             echo "| \`*.rom\` | flash images for emulators |"
             echo

@@ -5,7 +5,9 @@ TI-84 Plus Silver Edition** (Z80 at 15 MHz, 128 KiB RAM) with a network
 library — the [lwIP](https://savannah.nongnu.org/projects/lwip/) TCP/IP stack
 on a USB network interface, sockets, TLS 1.3 and fonts for many scripts —
 and applications built on it: a web browser, an SSH client and a network
-console.
+console. The browser and the SSH client also come as **TI-OS Flash
+applications** for the TI-84 Plus, without the fonts
+([platform/](platform/README.md)).
 
 ![Wikipedia's Zilog Z80 article on the calculator](docs/wikipedia-z80-text.png)
 ![The Japanese Wikipedia article on Z80](docs/wikipedia-z80-ja.png)
@@ -26,7 +28,8 @@ git clone --recursive https://github.com/MaxSignal/lwip84.git
 
 | Path | Contents |
 |------|----------|
-| `os/` | the OS: start-up, interrupts, far calls, heap, LCD, keypad, USB and CDC-NCM drivers, text input, the application menu |
+| `kernel/` | interrupts, heap, LCD, keypad, USB and CDC-NCM drivers, text input, screen layout: shared by both platforms |
+| [`platform/`](platform/README.md) | `os/`: the standalone OS (start-up, far calls, the menu and console); `tios/`: the TI-OS applications |
 | `lib/net/` | the network library: lwIP glue, sockets, TLS 1.3 |
 | `lib/crypto/` | SHA-256/HMAC/HKDF, ChaCha20/Poly1305, AES-128/GCM, X25519, random numbers |
 | `lib/font/` | the external font (Japanese, Chinese, Hangul, Arabic, Devanagari, ...) |
@@ -156,6 +159,7 @@ make                      # build-84p/lwip84.8xu (OS upgrade) and lwip84.rom
 make MODEL=84pse          # TI-84 Plus Silver Edition
 make DEBUG=1              # debug build: log on the LCD (or in emu84)
 make RAM48=1              # for 48 KiB of RAM: build-84p-48k/
+make PLATFORM=tios APP=browser   # TI-OS app: build-tios-browser/lwip84.8xk (APP=ssh)
 make emu                  # the emulator, build-84p/emu84
 make FONT=other.txt       # other external fonts (FONT= for none)
 ```
@@ -188,6 +192,10 @@ rules and the NetworkManager profile. `tools/build-ti84link.sh` builds
 
 To go back to TI-OS, send TI's OS upgrade the same way.
 
+The TI-OS applications (`lwip84-browser.8xk`, `lwip84-ssh.8xk`, TI-84 Plus
+with 128 KiB of RAM) are sent to TI-OS like any other app (TiLP, TI
+Connect) and started from APPS; see [platform/](platform/README.md).
+
 ## How it works
 
 ### Memory and code banking
@@ -217,14 +225,14 @@ The six other RAM pages (96 KiB) are reached through `xram_read` /
 `xram_write` and hold the web page (64 KiB), the SSH scrollback (24 KiB),
 the console history and the browser history. On the calculators with 48
 KiB of RAM pages 82h-87h are one page; `k_detect_platform` sees that, and
-the 48K build (`TI84P_RAM48`, layout in `os/kernel.h` and
+the 48K build (`TI84P_RAM48`, layout in `kernel/kernel.h` and
 `app/browser/html.h`) fits everything into its 16 KiB. `emu84 -r48`
 behaves like those calculators.
 
 ### USB
 
-`os/usb.c` drives the MUSBFDRC controller as a device with one CDC-NCM
-function (`os/ncm.c`, NTB16); endpoint 0 is served from the interrupt
+`kernel/usb.c` drives the MUSBFDRC controller as a device with one CDC-NCM
+function (`kernel/ncm.c`, NTB16); endpoint 0 is served from the interrupt
 handler. VBus has to read low for half a second before the configuration
 is dropped, and if the host has not configured the function again three
 seconds after that while VBus is present, the OS disconnects and connects
@@ -294,7 +302,7 @@ priority order:
 - In text a glyph takes two cells: a lead byte (01h-1Fh, 7Fh, 80h-9Fh or
   FFh) and a trail byte 01h-FFh, which together give the glyph number (up to
   16575), so text stays a plain string and ASCII keeps its meaning. A row
-  with glyphs is 8 pixels high, other rows stay 6 pixels (`os/ui.c`).
+  with glyphs is 8 pixels high, other rows stay 6 pixels (`kernel/ui.c`).
 
 Arabic shaping, right-to-left runs and Devanagari reordering are done by the
 applications that lay out text (see the [browser](app/browser/README.md)).

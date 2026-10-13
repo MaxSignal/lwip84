@@ -59,6 +59,11 @@ void far_read(uint8_t page, uint16_t addr, void *dst, uint16_t len);
 /* extended RAM pages 82h-87h: 96 KiB for application buffers (page text,
  * terminal scrollback); buffers passed here must lie in 8000h-FFFFh.  The
  * calculators with 48 KiB of RAM have one such page (make RAM48=1). */
+#ifdef TI84P_APP
+#define XRAM_PAGE 0x84                  /* first page (kernel/far.c) */
+#else
+#define XRAM_PAGE 0x82
+#endif
 #ifdef TI84P_RAM48
 #define XRAM_SIZE 0x4000UL
 #define XRAM_BROWSER 0x0000UL           /* 11.2 KiB: web page (app/browser/html.h) */

@@ -42,7 +42,9 @@ void lcd_init(void)
     lcd_out_cmd(0x01);        /* 8-bit transfers */
     lcd_out_cmd(0x05);        /* auto-increment rows (X) */
     lcd_out_cmd(0x40);        /* z-address 0 */
-    lcd_out_cmd((uint8_t)0xF0);   /* contrast */
+#ifndef TI84P_APP
+    lcd_out_cmd((uint8_t)0xF0);   /* contrast (in TI-OS: its own) */
+#endif
     lcd_out_cmd(0x03);        /* display on */
     lcd_clear();
     lcd_update();

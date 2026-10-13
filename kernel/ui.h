@@ -1,4 +1,4 @@
-/* ui.h - full-screen layout for applications (os/ui.c): an inverted
+/* ui.h - full-screen layout for applications (kernel/ui.c): an inverted
  * status line and text rows of 24 cells (bit 7: inverted; font glyphs take
  * two cells, see font.h) */
 #ifndef TI84P_UI_H

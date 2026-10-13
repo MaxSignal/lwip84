@@ -1,7 +1,7 @@
 # SSH client
 
 An SSH client for lwIP-84+ with a small VT100 terminal. **APPS, 2** opens
-it.
+it; in TI-OS it is the app `lwIPssh` ([platform/](../../platform/README.md)).
 
 ![A shell on the calculator](../../docs/ssh-shell.png)
 

@@ -41,8 +41,12 @@ static void draw_glyph(uint8_t x, uint8_t y, const uint8_t *rows, uint8_t n)
 }
 
 /* recently drawn glyphs, by their lead and trail bytes: reading one from
- * flash takes far calls */
+ * flash takes far calls (the TI-OS app has no font) */
+#ifdef TI84P_APP
+#define GCACHE 1
+#else
 #define GCACHE 64
+#endif
 static struct {
     uint8_t lead, trail, w, rows[8];
 } gcache[GCACHE];

@@ -1,4 +1,4 @@
-/* ti84p_libc.h - libc pieces missing from SDCC's z80 library (os/fmt.c, os/heap.c) */
+/* ti84p_libc.h - libc pieces missing from SDCC's z80 library (kernel/fmt.c, kernel/heap.c) */
 #ifndef TI84P_LIBC_H
 #define TI84P_LIBC_H
 #include <stddef.h>

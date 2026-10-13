@@ -8,7 +8,11 @@
 uint8_t font_ok;
 static uint16_t n_glyphs;
 /* recently found code points (Japanese text repeats many characters) */
+#ifdef TI84P_APP
+#define CACHE 4                 /* no font in the TI-OS app */
+#else
 #define CACHE 64
+#endif
 static uint16_t cache_cp[CACHE], cache_g[CACHE];
 static uint32_t lo_off, kind_off, glyph_off;
 static uint8_t cell_w;

@@ -74,7 +74,11 @@
 #define MEMP_NUM_TCPIP_MSG_API 0
 #define MEMP_NUM_TCPIP_MSG_INPKT 0
 #define PBUF_POOL_BUFSIZE 256
+#ifdef TI84P_APP
+#define PBUF_POOL_SIZE 8                /* the TI-OS app: 32 KiB of RAM in all */
+#else
 #define PBUF_POOL_SIZE 12
+#endif
 
 #define TCP_TTL 64
 #define TCP_QUEUE_OOSEQ 0
@@ -83,7 +87,11 @@
 #define TCP_SND_BUF (4 * TCP_MSS)
 #define TCP_SND_QUEUELEN ((4 * (TCP_SND_BUF) + (TCP_MSS - 1)) / (TCP_MSS))
 #define TCP_SNDLOWAT (TCP_SND_BUF / 2)
+#ifdef TI84P_APP
+#define TCP_WND (3 * TCP_MSS)
+#else
 #define TCP_WND (4 * TCP_MSS)
+#endif
 #define TCP_MSL 15000UL
 #define TCP_MAXRTX 6
 #define TCP_SYNMAXRTX 6

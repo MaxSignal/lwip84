@@ -7,7 +7,11 @@
 #include <string.h>
 #include "kernel.h"
 
+#ifdef TI84P_APP
+#define STACK_RESERVE 1536u
+#else
 #define STACK_RESERVE 2048u
+#endif
 #define HDR 2u
 #define USED 1u
 
