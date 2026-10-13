@@ -1,4 +1,4 @@
-/* tls84.h - minimal TLS 1.3 client (port/tls84.c) */
+/* tls84.h - minimal TLS 1.3 client (lib/net/tls84.c) */
 #ifndef TI84P_TLS84_H
 #define TI84P_TLS84_H
 #include <stdint.h>

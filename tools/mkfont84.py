@@ -11,7 +11,7 @@ RANGES: XXXX-YYYY[:filter] ... (filter gb2312+big5 keeps only the Han
 characters of GB 2312 and Big5 level 1); without ranges everything.
 Paths are relative to LIST.
 
-The blob is stored on flash data pages (os/font.c reads it):
+The blob is stored on flash data pages (lib/font/font.c reads it):
 
   0   "F84" 0             magic
   4   version (2), cell height (8), cell width (8), 0
@@ -27,7 +27,7 @@ The blob is stored on flash data pages (os/font.c reads it):
                           2 mark (drawn over the glyph before it)
       glyphs[N][8]        one byte per pixel row, leftmost pixel in bit 7
 
-At most 16575 glyphs (os/font.h numbers them with two bytes).
+At most 16575 glyphs (lib/font/font.h numbers them with two bytes).
 """
 import gzip
 import os

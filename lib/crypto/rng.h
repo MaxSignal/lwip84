@@ -1,4 +1,4 @@
-/* rng.h - entropy pool and random bytes (crypto/rng.c) */
+/* rng.h - entropy pool and random bytes (lib/crypto/rng.c) */
 #ifndef TI84P_RNG_H
 #define TI84P_RNG_H
 #include <stdint.h>

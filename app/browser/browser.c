@@ -1,6 +1,6 @@
-/* browser.c - a text web browser (HTTP/1.0 and HTTPS through port/sock84.c).
+/* browser.c - a text web browser (HTTP/1.0 and HTTPS through lib/net/sock84.c).
  *
- * The page is rendered by os/html.c while it arrives.  Links and form
+ * The page is rendered by app/browser/html.c while it arrives.  Links and form
  * fields carry inverted numbers; typing a number and ENTER follows the
  * link or uses the field (edit text, toggle a check box, choose from a
  * list, submit).  Forms are sent with GET or POST.  Text typed into the

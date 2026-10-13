@@ -1,6 +1,6 @@
 /* tls84.c - a minimal TLS 1.3 client for the TI-84 Plus as an lwIP altcp
  * layer: tls84_new() returns an altcp_pcb that is used like a TCP one
- * (port/sock84.c does that for SOCK_TLS sockets).
+ * (lib/net/sock84.c does that for SOCK_TLS sockets).
  *
  * Only what is needed to talk to a server is done:
  *   - two cipher suites, TLS_AES_128_GCM_SHA256 (offered alone: AES is

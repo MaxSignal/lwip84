@@ -1,4 +1,4 @@
-/* term.h - terminal emulator for the SSH client (os/term.c) */
+/* term.h - terminal emulator for the SSH client (app/ssh/term.c) */
 #ifndef TI84P_TERM_H
 #define TI84P_TERM_H
 #include <stdint.h>

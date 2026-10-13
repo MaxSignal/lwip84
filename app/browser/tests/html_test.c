@@ -1,6 +1,7 @@
-/* html_test.c - run the browser's HTML renderer (os/html.c) on the host.
+/* html_test.c - run the browser's HTML renderer (app/browser/html.c) on the host.
  *
- *   gcc -O2 -DHTML_HOST -I os -o html_test tests/html_test.c os/html.c os/font.c
+ *   gcc -O2 -DHTML_HOST -I app/browser -I lib/font -o html_test app/browser/tests/html_test.c \
+ *       app/browser/html.c lib/font/font.c
  *   html_test [-c CHUNK] [-i] [-a] [-f FONT.bin] FILE.html
  *
  * Prints the title and the page as it appears on the calculator (item

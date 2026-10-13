@@ -1,5 +1,5 @@
 /* html.h - streaming HTML renderer and form store of the web browser
- * (os/html.c).  The page is laid out into lines of HTML_COLS characters in
+ * (app/browser/html.c).  The page is laid out into lines of HTML_COLS characters in
  * extended RAM while it arrives; links and form fields become numbered
  * items.  Characters with bit 7 set are drawn inverted (item numbers). */
 #ifndef TI84P_HTML_H

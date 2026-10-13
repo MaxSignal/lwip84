@@ -1,4 +1,4 @@
-/* net84.h - lwIP on the CDC-NCM interface (port/net84.c) */
+/* net84.h - lwIP on the CDC-NCM interface (lib/net/net84.c) */
 #ifndef NET84_H
 #define NET84_H
 #include <stdint.h>

@@ -24,7 +24,7 @@ static uint8_t r_reg;
 
 /* xorshift32, stirred with the timer and the Z80 refresh register (whose
  * value depends on the exact instruction timing); good enough for ports
- * and XIDs, not for keys (crypto/rng.c) */
+ * and XIDs, not for keys (lib/crypto/rng.c) */
 uint32_t sys_rand32(void)
 {
     uint32_t x;

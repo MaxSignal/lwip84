@@ -1,4 +1,4 @@
-/* apps.h - test applications on lwIP-CE's socket API (os/apps.c) */
+/* apps.h - test applications on lwIP-CE's socket API (app/console/apps.c) */
 #ifndef TI84P_APPS_H
 #define TI84P_APPS_H
 #include <stdint.h>

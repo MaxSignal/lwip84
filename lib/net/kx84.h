@@ -1,4 +1,4 @@
-/* kx84.h - shared X25519 key pair (port/kx84.c) */
+/* kx84.h - shared X25519 key pair (lib/net/kx84.c) */
 #ifndef TI84P_KX84_H
 #define TI84P_KX84_H
 #include <stdint.h>

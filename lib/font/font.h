@@ -1,4 +1,4 @@
-/* font.h - the external font on flash data pages (os/font.c, written by
+/* font.h - the external font on flash data pages (lib/font/font.c, written by
  * tools/mkfont84.py from fonts/fonts.txt).
  *
  * In text a font glyph takes two cells: a lead byte and a trail byte

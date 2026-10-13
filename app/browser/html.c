@@ -13,7 +13,7 @@
  * is drawn inverted (bit 7) in front of the link text or the field.
  * Text is reduced to ASCII where it can be: entities and UTF-8 are decoded,
  * accented letters lose their accents; other characters are shown with the
- * external font (os/font.c, two cells each) or become '?'.
+ * external font (lib/font/font.c, two cells each) or become '?'.
  */
 #include <string.h>
 #include <stdlib.h>

@@ -47,16 +47,21 @@ endif
 
 CFLAGS  = -mz80 --std-sdcc11 --opt-code-size --constseg CONST $(DEFS) \
           -DFE_ASM '-D__attribute__(x)=' \
-          -I include -I os -I port -I crypto -I $(LWIP_SRC)/include
+          -I include -I os -I lib/net -I lib/crypto -I lib/font \
+          -I app/browser -I app/ssh -I app/console -I $(LWIP_SRC)/include
 
 # modules that must stay in page 0 (interrupt path, runtime)
 COMMON_C = os/isr.c os/far.c os/usb.c os/kbd.c
 COMMON_S = os/crt0.s os/farcall.s os/usb_ll.s
-# everything else is placed in flash pages 1.. by tools/banker.py
-BANKED_C = os/main.c os/demo.c os/apps.c os/input.c os/ui.c os/browser.c os/html.c os/font.c os/ssh.c os/term.c os/lcd.c os/fmt.c os/usb_ctl.c os/ncm.c os/heap.c \
-           port/sys_arch.c port/time84.c port/netif_ncm.c port/net84.c port/sock84.c \
-           port/tls84.c port/kx84.c \
-           crypto/sha256.c crypto/chacha.c crypto/aes.c crypto/x25519.c crypto/rng.c \
+# everything else is placed in flash pages 1.. by tools/banker.py:
+# the OS (os/), the library (lib/) and the applications (app/)
+BANKED_C = os/main.c os/input.c os/ui.c os/lcd.c os/fmt.c os/usb_ctl.c os/ncm.c os/heap.c \
+           lib/net/sys_arch.c lib/net/time84.c lib/net/netif_ncm.c lib/net/net84.c \
+           lib/net/sock84.c lib/net/tls84.c lib/net/kx84.c lib/font/font.c \
+           lib/crypto/sha256.c lib/crypto/chacha.c lib/crypto/aes.c lib/crypto/x25519.c \
+           lib/crypto/rng.c \
+           app/browser/browser.c app/browser/html.c app/ssh/ssh.c app/ssh/term.c \
+           app/console/apps.c app/console/demo.c \
            $(LWIP_C)
 
 # lwIP (git submodule lwip/, STABLE-2_2_1_RELEASE); tcp_in.c is compiled
@@ -78,7 +83,7 @@ BANKED_ASM = $(patsubst $(LWIP_SRC)/%.c,$(B)/asm/lwip/%.asm,$(filter $(LWIP_SRC)
 all: $(B)/lwip84.rom $(B)/lwip84.8xu
 
 # no automatic dependencies with SDCC: every module depends on all port headers
-HDRS = $(wildcard include/*.h include/*/*.h os/*.h port/*.h crypto/*.h)
+HDRS = $(wildcard include/*.h include/*/*.h os/*.h lib/*/*.h app/*/*.h)
 
 $(B)/asm/%.asm: %.c $(HDRS)
 	@mkdir -p $(dir $@)
@@ -101,7 +106,7 @@ $(B)/asm/%.asm: %.s
 	@mkdir -p $(dir $@)
 	cp $< $@
 
-FIXED_ASM = $(B)/asm/crypto/fe_z80.asm
+FIXED_ASM = $(B)/asm/lib/crypto/fe_z80.asm
 $(FIXED_ASM): tools/gen_fe_z80.py tools/gen_sha256_z80.py tools/gen_poly1305_z80.py tools/gen_aes_z80.py
 	@mkdir -p $(dir $@)
 	$(PY) tools/gen_aes_z80.py $@.aes 0x4200 $@.sbox
@@ -123,7 +128,7 @@ $(B)/lwip84.ihx: $(B)/banked.stamp
 	    $$(cat ../banks.lnk) \
 	    -k $(SDCCLIB) -l z80 ../lwip84.ihx crt0.rel $$(ls *.rel | grep -v '^crt0.rel$$')
 
-# external font on the flash data pages (os/font.h): the fonts listed in
+# external font on the flash data pages (lib/font/font.h): the fonts listed in
 # FONT (fonts/fonts.txt); FONT= for none
 FONT ?= fonts/fonts.txt
 ifneq ($(FONT),)

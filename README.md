@@ -1,9 +1,11 @@
 # lwIP-84+
 
 A small operating system for the original monochrome **TI-84 Plus and
-TI-84 Plus Silver Edition** (Z80 at 15 MHz, 128 KiB RAM) with the
-[lwIP](https://savannah.nongnu.org/projects/lwip/) TCP/IP stack, a USB
-network interface, a TLS 1.3 client, a text web browser and an SSH client.
+TI-84 Plus Silver Edition** (Z80 at 15 MHz, 128 KiB RAM) with a network
+library — the [lwIP](https://savannah.nongnu.org/projects/lwip/) TCP/IP stack
+on a USB network interface, sockets, TLS 1.3 and fonts for many scripts —
+and applications built on it: a web browser, an SSH client and a network
+console.
 
 ![Wikipedia's Zilog Z80 article on the calculator](docs/wikipedia-z80-text.png)
 ![The Japanese Wikipedia article on Z80](docs/wikipedia-z80-ja.png)
@@ -18,6 +20,19 @@ network interface, a TLS 1.3 client, a text web browser and an SSH client.
 ```
 git clone --recursive https://github.com/MaxSignal/lwip84.git
 ```
+
+| Path | Contents |
+|------|----------|
+| `os/` | the OS: start-up, interrupts, far calls, heap, LCD, keypad, USB and CDC-NCM drivers, text input, the application menu |
+| `lib/net/` | the network library: lwIP glue, sockets, TLS 1.3 |
+| `lib/crypto/` | SHA-256/HMAC/HKDF, ChaCha20/Poly1305, AES-128/GCM, X25519, random numbers |
+| `lib/font/` | the external font (Japanese, Chinese, Hangul, Arabic, Devanagari, ...) |
+| [`app/browser/`](app/browser/README.md) | web browser |
+| [`app/ssh/`](app/ssh/README.md) | SSH client |
+| [`app/console/`](app/console/README.md) | network console and socket examples |
+| `emu/` | `emu84`, a headless emulator with a USB host |
+| `tools/`, `tests/` | build tools, code generators, host tests |
+| `fonts/`, `patches/`, `lwip/` | font sources, the lwIP fix, lwIP |
 
 ## Connecting
 
@@ -47,7 +62,7 @@ browser with forms, search and the Japanese font, and the SSH client
 (tested against OpenSSH 9.6). Chinese, Hangul, Arabic and Devanagari text
 and UTF-8 in the SSH terminal are tested in emu84.
 
-## Applications
+## Using the calculator
 
 The OS starts in the network console; **APPS** opens the menu (1 web
 browser, 2 SSH client, 3 network console). **2nd+ON** turns the calculator
@@ -63,74 +78,6 @@ off, **ON** turns it on again.
 | 2nd + key | one symbol: `,`→`;` `(`→`{` `)`→`}` `*`→`[` `-`→`]` `/`→`\|` `^`→`~` `+`→`'` `.`→`_` `0`→`` ` `` STO→`=` LOG→`<` LN→`>` x²→`\` x⁻¹→`$` MATH→`!` APPS→`@` PRGM→`#` SIN→`%` COS→`&` TAN→`*` `(-)`→`?` |
 | DEL / CLEAR | delete a character / clear the line (CLEAR on an empty line cancels) |
 | LEFT/RIGHT, UP/DOWN | move the cursor, start/end of the line |
-
-### Web browser
-
-HTTP/1.0 and HTTPS with its own HTML renderer (`os/html.c`; no CSS, no
-JavaScript). The page is laid out as it arrives, 24 columns wide:
-
-- headings, paragraphs, lists, tables (`header: value` for `th`/`td`
-  pairs), `pre`; entities and UTF-8 are decoded: Latin letters lose their
-  accents, Japanese and other characters of the [external font](#external-font)
-  are shown with it, the rest become `?`;
-- invisible content is skipped (`script`, `style`, `svg`, `hidden`,
-  `display:none`, Wikipedia's menus and edit links, ...);
-- links and form fields are numbered, the number drawn inverted;
-- forms: text and password fields, text areas, check boxes, radio buttons,
-  lists, submit buttons and hidden fields, sent with GET or POST.
-
-Words typed into the URL line (anything with a space, or without a dot) are
-searched with [DuckDuckGo Lite](https://lite.duckduckgo.com/lite/), which
-works without JavaScript (Google's search does not). Too many searches from
-one address can get a picture challenge from DuckDuckGo, which cannot be
-solved here.
-
-| Key | Action |
-|-----|--------|
-| Y= | URL or search words |
-| 0-9, ENTER | use item `n`: follow a link, edit a field, toggle a check box, choose a radio button or a list entry, press a button |
-| UP/DOWN, LEFT/RIGHT | scroll by a line, by a screen |
-| GRAPH | top of the page / start of the main content |
-| DEL | back |
-| ENTER | reload |
-| CLEAR | stop loading |
-| MODE | back to the menu (the page is kept) |
-
-ENTER in the only text field of a form (a search box) sends the form. A
-page keeps up to 1600 lines.
-
-### SSH client
-
-Enter `host[:port]`, the user name and the password. `curve25519-sha256`,
-`chacha20-poly1305@openssh.com`, password or keyboard-interactive login,
-a VT100 subset with scrollback and UTF-8: wide characters (CJK, kana,
-Hangul) are drawn with the external font in two columns, as the server's
-`wcwidth` counts them, accented letters lose their accents, the rest is
-`?`. The terminal is 24x7 with the font (8-pixel rows), else 24x9. The
-host key is **not** checked.
-
-| Key | Sends / does |
-|-----|--------------|
-| ENTER, DEL | CR, backspace (7Fh) |
-| CLEAR, VARS, MODE | Ctrl-C, Tab, Esc |
-| XT,θ,n then a key | Ctrl + that key |
-| arrows | cursor keys |
-| 2nd+UP / 2nd+DOWN | scroll back / forward |
-| 2nd+MODE | disconnect |
-
-### Network console
-
-| Key | Action |
-|-----|--------|
-| Y= | status: USB, NTB counters, gateway, DNS, free heap |
-| WINDOW / ZOOM | ping the gateway / DNS lookup of example.com |
-| TRACE | HTTP GET http://example.com/ |
-| 2nd, MATH | HTTPS GET https://example.com/ |
-| MATH | HTTPS GET https://gateway:4433/ (for example `openssl s_server -www`) |
-| GRAPH / VARS | TCP echo with gateway:8084 / download test from gateway:8085 |
-| PRGM | crypto self test and timing |
-| MODE / STAT | SNTP time sync / show the time |
-| CLEAR, UP/DOWN | clear, scroll back |
 
 ## Security
 
@@ -150,13 +97,10 @@ This is an experiment tuned for speed; **the connections are not secure**:
 
 | | |
 |---|---|
-| HTML renderer | about 40 KB/s |
-| page over HTTP (network stack + renderer) | about 9 KB/s (337 KB in 38 s) |
-| page over HTTPS | about 4 KB/s (337 KB in 81 s); the first screen appears after a few seconds |
+| a web page over HTTP (network stack and the browser's renderer) | about 9 KB/s |
 | AES-128 / ChaCha20 decryption (Z80 assembly) | 12.3 / 7.3 KB/s |
 | SHA-256 (Z80 assembly) | 3.4 KB/s |
 | TLS 1.3 full handshake | about 2 s of CPU time after the ServerHello (resumed: 1.3 s) |
-| SSH: connect to shell | about 3 s |
 
 ## Building
 
@@ -175,6 +119,10 @@ make FONT=other.txt       # other external fonts (FONT= for none)
 The Makefile looks for SDCC in `../tools/sdcc-4.4.0/bin` and other tools in
 `../tools/local/bin`; override with `SDCC_BIN=` and `TOOLS=`.
 `tools/get-key.sh` downloads TI's public OS signing key `0A` into `keys/`.
+
+SDCC 4.4.0 sometimes loses the address of an array in `a[i++] = v` when
+`a` is reached through a pointer and `i` is a static variable;
+`tools/check_iy.py` looks for that in every module and stops the build.
 
 Every push to `main` builds both models, runs the tests and publishes the
 `.8xu` and `.rom` files as a GitHub release (`.github/workflows/build.yml`).
@@ -217,8 +165,54 @@ does not run code on pages 08h-29h (08h-69h on the SE), so code is on pages
 hold data: the external font from 08h on, the rest is free.
 
 The six other RAM pages (96 KiB) are reached through `xram_read` /
-`xram_write` and hold the web page (64 KiB), the SSH scrollback (24 KiB)
-and the console history.
+`xram_write` and hold the web page (64 KiB), the SSH scrollback (24 KiB),
+the console history and the browser history.
+
+### USB
+
+`os/usb.c` drives the MUSBFDRC controller as a device with one CDC-NCM
+function (`os/ncm.c`, NTB16); endpoint 0 is served from the interrupt
+handler. VBus has to read low for half a second before the configuration
+is dropped, and if the host has not configured the function again three
+seconds after that while VBus is present, the OS disconnects and connects
+again so that the host enumerates it anew (emu84: `vbusglitch MS`).
+
+### Network library
+
+| Path | Contents |
+|------|----------|
+| `lib/net/netif_ncm.c`, `lib/net/net84.c` | lwIP interface, start-up, DHCP, main-loop service |
+| `lib/net/sock84.c` | sockets for the applications |
+| `lib/net/tls84.c` | TLS 1.3 client as an lwIP altcp layer |
+| `lib/net/kx84.c` | the X25519 key pair |
+| `include/lwipopts.h` | lwIP configuration |
+| `patches/` | lwIP fix: stop the TCP persist timer when nothing is left to send |
+
+`lib/net/sock84.h` is what the applications use (see the
+[network console](app/console/README.md#the-socket-api)):
+
+```
+struct sock *s = sock_new(SOCK_TLS, 120000, event_cb);   /* or SOCK_TCP */
+sock_connect(s, "example.com", 443);   /* waits for DHCP, resolves, connects */
+sock_write(s, data, len);              /* queued if TCP cannot take it */
+n = sock_read(s, buf, sizeof(buf));    /* from the main loop */
+```
+
+Received data stays in lwIP's pbufs until it is read, and the TCP window
+opens as it is read. Events come from the main loop, never from inside
+lwIP.
+
+TLS 1.3 uses X25519 and `TLS_AES_128_GCM_SHA256`, which every TLS 1.3
+server must support; a host that refuses it gets
+`TLS_CHACHA20_POLY1305_SHA256` on the next attempt. Records are decrypted
+in place as a stream, so 16 KiB records need no 16 KiB buffer. Session
+tickets are kept for the last host and used for PSK resumption. No
+HelloRetryRequest, early data or KeyUpdate.
+
+AES, GHASH, ChaCha20, Poly1305, SHA-256 and the X25519 field arithmetic are
+Z80 assembly produced by `tools/gen_*_z80.py` on one fixed flash page (3Bh,
+7Bh on the SE); the rest is C (`lib/crypto/`). AES suits an 8-bit CPU better
+than ChaCha20 (bytes and a table instead of 32-bit additions and rotations).
 
 ### External font
 
@@ -230,89 +224,27 @@ priority order:
 |------|---------|
 | [k6x8](https://littlelimit.net/k6x8.htm) (6x8) | Japanese (JIS levels 1 and 2), kana, Greek, Cyrillic, symbols |
 | [QuanPixel](https://diaowinner.itch.io/galmuri-extended) (8x8) | Hangul (4363 syllables), the Han characters of GB 2312 and Big5 level 1 that JIS lacks, bopomofo |
-| [unscii](http://pelulamu.net/unscii/) Arabic (8x8) | Arabic with its contextual forms |
+| [unscii](http://pelulamu.net/unscii/) Arabic (8x8) | Arabic with its contextual forms (missing letters made from similar ones) |
 | [GNU Unifont](https://unifoundry.com/unifont/) Devanagari, halved to 8x8 | Devanagari |
 
-15877 glyphs in all. Scripts that need more than one glyph per character:
-
-- Arabic: the letters of a word are collected and each gets its isolated,
-  initial, medial or final form from its neighbours (lam-alef ligatures are
-  not in the font; harakat are not shown); runs of Arabic on a line are
-  stored right to left. The unscii letters that are missing are made from
-  similar ones (khah from hah plus a dot, ...).
-- Devanagari: words break only at spaces; the vowel sign i is moved in
-  front of its consonant cluster, the other vowel signs and marks are drawn
-  over the glyph before them. No conjunct ligatures.
-- CJK and Hangul: a line may break between any two characters.
-
-How it works:
-
-- `tools/mkfont84.py` builds the blob: a table by the high byte of the code
-  point, the sorted low bytes, 2 bits per glyph (half width, full width,
-  mark) and 8 bytes of pixels per glyph, and a checksum.
-- `tools/mkrom.py` puts it on the data pages and adds them to the `.8xu`.
-  mktiupgrade adds the first page of every 64 KB flash sector, and the boot
-  code erases a sector when it receives that page, so the data pages are
-  written cleanly.
-- `os/font.c` checks the checksum at start-up (the network console's status
+- `tools/mkfont84.py` merges them (15877 glyphs): a table by the high byte
+  of the code point, the sorted low bytes, 2 bits per glyph (half width,
+  full width, mark drawn over the glyph before it) and 8 bytes of pixels
+  per glyph, and a checksum.
+- `tools/mkrom.py` puts the blob on the data pages and adds them to the
+  `.8xu`. mktiupgrade adds the first page of every 64 KB flash sector, and
+  the boot code erases a sector when it receives that page, so the data
+  pages are written cleanly.
+- `lib/font/font.c` checks the checksum at start-up (the console's status
   shows `font ok`; without a valid font such characters stay `?`) and finds
   a glyph by binary search, with a cache of recent characters.
 - In text a glyph takes two cells: a lead byte (01h-1Fh, 7Fh, 80h-9Fh or
   FFh) and a trail byte 01h-FFh, which together give the glyph number (up to
   16575), so text stays a plain string and ASCII keeps its meaning. A row
-  with glyphs is 8 pixels high (7 rows of text), other rows stay 6 pixels.
+  with glyphs is 8 pixels high, other rows stay 6 pixels (`os/ui.c`).
 
-A Japanese Wikipedia article is laid out at about 5 KB/s (emu84; English
-pages about 9 KB/s). `html_test -f build-84p/font.bin FILE.html` shows the
-page with the font on the host.
-
-### Network
-
-| Path | Contents |
-|------|----------|
-| `os/usb.c`, `os/ncm.c` | USB peripheral driver, CDC-NCM function (NTB16) |
-| `port/netif_ncm.c`, `port/net84.c` | lwIP interface, start-up, DHCP, main-loop service |
-| `port/sock84.c` | sockets for the applications |
-| `port/tls84.c` | TLS 1.3 client as an lwIP altcp layer |
-| `include/lwipopts.h` | lwIP configuration |
-| `patches/` | lwIP fix: stop the TCP persist timer when nothing is left to send |
-
-`port/sock84.h` is what the applications use:
-
-```
-struct sock *s = sock_new(SOCK_TLS, 120000, event_cb);   /* or SOCK_TCP */
-sock_connect(s, "example.com", 443);   /* waits for DHCP, resolves, connects */
-
-void event_cb(struct sock *s, uint8_t ev, uint8_t a, int8_t err)
-{
-    if (ev == SOCK_EV_STATE && a == SOCK_CONNECTED)
-        sock_write(s, request, len);
-}
-
-/* main loop */
-while ((n = sock_available(s)) != 0)
-    n = sock_read(s, buf, n > sizeof(buf) ? sizeof(buf) : n);
-if (!sock_is_active(s))
-    sock_free(s);
-```
-
-Received data stays in lwIP's pbufs until it is read, and the TCP window
-opens as it is read. Events come from the main loop, never from inside
-lwIP.
-
-### TLS
-
-TLS 1.3 with X25519 and `TLS_AES_128_GCM_SHA256`, which every TLS 1.3
-server must support; a host that refuses it gets
-`TLS_CHACHA20_POLY1305_SHA256` on the next attempt. Records are decrypted
-in place as a stream, so 16 KiB records need no 16 KiB buffer. Session
-tickets are kept for the last host and used for PSK resumption. No
-HelloRetryRequest, early data or KeyUpdate.
-
-AES, GHASH, ChaCha20, Poly1305, SHA-256 and the X25519 field arithmetic are
-Z80 assembly produced by `tools/gen_*_z80.py` on one fixed flash page (3Bh,
-7Bh on the SE); the rest is C (`crypto/`). AES suits an 8-bit CPU better than
-ChaCha20 (bytes and a table instead of 32-bit additions and rotations).
+Arabic shaping, right-to-left runs and Devanagari reordering are done by the
+applications that lay out text (see the [browser](app/browser/README.md)).
 
 ## Testing
 
@@ -331,22 +263,20 @@ EOF
 ```
 
 Commands: `run MS`, `waitlog TEXT MS`, `key NAME`, `down`/`up NAME`, `on`,
-`screen [FILE.pbm]`, `regs`, `dumpram FILE`, `profile on|FILE`, `quit`.
-The PC's `127.0.0.1` is `192.168.84.1` for the calculator.
-`tools/typekeys.py [--mode a] TEXT` turns text into `key` commands, `tools/pbm2png.py`
-converts screens.
+`vbusglitch MS`, `screen [FILE.pbm]`, `regs`, `dumpram FILE`,
+`profile on|FILE`, `quit`. The PC's `127.0.0.1` is `192.168.84.1` for the
+calculator. `tools/typekeys.py [--mode a] TEXT` turns text into `key`
+commands, `tools/pbm2png.py` converts screens.
 
-Host tests (also run by CI):
+Host tests of the library (also run by CI; the browser has its own in
+`app/browser/tests/`):
 
 ```
 gcc -O2 -o ../tmp/z80run tests/z80run.c
 python3 tests/asm_test.py aes 30           # also sha256, poly1305, ghash: Z80 code vs Python
-gcc -O2 -I crypto -I tests -o ../tmp/aes_test tests/aes_test.c crypto/aes.c && ../tmp/aes_test
-gcc -O2 -I crypto -o ../tmp/crypto_test tests/crypto_test.c crypto/sha256.c crypto/chacha.c crypto/x25519.c && ../tmp/crypto_test
-gcc -O2 -DHTML_HOST -I os -o ../tmp/html_test tests/html_test.c os/html.c os/font.c && sh tests/html_check.sh ../tmp/html_test
+gcc -O2 -I lib/crypto -I tests -o ../tmp/aes_test tests/aes_test.c lib/crypto/aes.c && ../tmp/aes_test
+gcc -O2 -I lib/crypto -o ../tmp/crypto_test tests/crypto_test.c lib/crypto/sha256.c lib/crypto/chacha.c lib/crypto/x25519.c && ../tmp/crypto_test
 ```
-
-`html_test -i FILE.html` shows how a saved page is rendered.
 
 ## License
 

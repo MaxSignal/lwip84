@@ -87,20 +87,20 @@ jobs:
 
       - name: Crypto tests
         run: |
-          gcc -O2 -I crypto -o "$TMPDIR/crypto_test" tests/crypto_test.c crypto/sha256.c crypto/chacha.c crypto/x25519.c
+          gcc -O2 -I lib/crypto -o "$TMPDIR/crypto_test" tests/crypto_test.c lib/crypto/sha256.c lib/crypto/chacha.c lib/crypto/x25519.c
           "$TMPDIR/crypto_test"
           gcc -O2 -o "$TMPDIR/z80run" tests/z80run.c
           Z80RUN="$TMPDIR/z80run" python3 tests/asm_test.py sha256 20
           Z80RUN="$TMPDIR/z80run" python3 tests/asm_test.py poly1305 30
           Z80RUN="$TMPDIR/z80run" python3 tests/asm_test.py aes 30
           Z80RUN="$TMPDIR/z80run" python3 tests/asm_test.py ghash 20
-          gcc -O2 -I crypto -I tests -o "$TMPDIR/aes_test" tests/aes_test.c crypto/aes.c
+          gcc -O2 -I lib/crypto -I tests -o "$TMPDIR/aes_test" tests/aes_test.c lib/crypto/aes.c
           "$TMPDIR/aes_test"
 
       - name: HTML renderer tests
         run: |
-          gcc -O2 -Wall -DHTML_HOST -I os -o "$TMPDIR/html_test" tests/html_test.c os/html.c os/font.c
-          sh tests/html_check.sh "$TMPDIR/html_test"
+          gcc -O2 -Wall -DHTML_HOST -I app/browser -I lib/font -o "$TMPDIR/html_test" app/browser/tests/html_test.c app/browser/html.c lib/font/font.c
+          sh app/browser/tests/html_check.sh "$TMPDIR/html_test"
 
       - name: Collect files
         run: |

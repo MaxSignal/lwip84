@@ -1,5 +1,5 @@
 /* time84.h - wall clock: the ASIC's seconds counter plus an offset set by
- * SNTP (port/time84.c) */
+ * SNTP (lib/net/time84.c) */
 #ifndef TIME84_H
 #define TIME84_H
 #include <stdint.h>

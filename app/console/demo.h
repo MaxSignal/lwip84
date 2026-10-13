@@ -1,4 +1,4 @@
-/* demo.h - network tests (os/demo.c) */
+/* demo.h - network tests (app/console/demo.c) */
 #ifndef TI84P_DEMO_H
 #define TI84P_DEMO_H
 #include <stdint.h>

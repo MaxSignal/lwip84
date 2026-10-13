@@ -4,7 +4,7 @@
 # pieces
 set -e
 bin=${1:?html_test binary}
-dir=$(dirname "$0")/html
+dir=$(dirname "$0")/pages
 fail=0
 for f in "$dir"/*.html; do
     exp=${f%.html}.txt

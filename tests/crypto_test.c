@@ -1,5 +1,5 @@
-/* crypto_test.c - host test of crypto/ against RFC test vectors:
- *   gcc -O2 -I crypto -o /tmp/crypto_test tests/crypto_test.c crypto/sha256.c crypto/chacha.c crypto/x25519.c
+/* crypto_test.c - host test of lib/crypto/ against RFC test vectors:
+ *   gcc -O2 -I lib/crypto -o /tmp/crypto_test tests/crypto_test.c lib/crypto/sha256.c lib/crypto/chacha.c lib/crypto/x25519.c
  *   /tmp/crypto_test */
 #include <stdio.h>
 #include <string.h>

@@ -30,7 +30,7 @@
 #define LWIP_UDPLITE 0
 #define LWIP_TCP 1
 #define LWIP_ALTCP 1
-#define LWIP_ALTCP_TLS 0                /* port/tls84.c is used directly */
+#define LWIP_ALTCP_TLS 0                /* lib/net/tls84.c is used directly */
 #define LWIP_IGMP 0
 #define LWIP_DHCP 1
 #define LWIP_DHCP_PROVIDE_DNS_SERVERS 1

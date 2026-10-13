@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""gen_fe_z80.py OUT.s - Z80 field arithmetic mod 2^255-19 for crypto/x25519.c
-and the ChaCha20 block function for crypto/chacha.c.
+"""gen_fe_z80.py OUT.s - Z80 field arithmetic mod 2^255-19 for lib/crypto/x25519.c
+and the ChaCha20 block function for lib/crypto/chacha.c.
 
 The module is placed alone on a fixed flash page (banker.py fixed@PAGE), so
 its tables start at 4000h and are addressed absolutely:

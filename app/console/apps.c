@@ -1,4 +1,4 @@
-/* apps.c - test applications of the network console on port/sock84.c:
+/* apps.c - test applications of the network console on lib/net/sock84.c:
  * create a socket, react to its events, read from the main loop. */
 #include <string.h>
 #include "kernel.h"

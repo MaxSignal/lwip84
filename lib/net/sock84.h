@@ -1,7 +1,7 @@
-/* sock84.h - TCP and TLS client sockets for the applications (port/sock84.c).
+/* sock84.h - TCP and TLS client sockets for the applications (lib/net/sock84.c).
  *
  * A thin layer over lwIP's altcp API: it waits for the network (DHCP),
- * resolves the host name, connects (through port/tls84.c for TLS), queues
+ * resolves the host name, connects (through lib/net/tls84.c for TLS), queues
  * writes that do not fit into the TCP send buffer and keeps received data
  * as lwIP's pbufs until the application reads it (the TCP window opens as
  * it reads).  Events are delivered from sock_poll(), never from inside

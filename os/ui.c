@@ -2,7 +2,7 @@
  *
  * Text is a string of cells: ASCII in the 3x5 font (4 pixels wide), bit 7
  * set for inverted ASCII, and glyphs of the external font in two cells
- * (os/font.h), 8 pixels wide and 7 high.  A row with font glyphs is 8
+ * (lib/font/font.h), 8 pixels wide and 7 high.  A row with font glyphs is 8
  * pixels high, other rows 6. */
 #include <string.h>
 #include "kernel.h"
