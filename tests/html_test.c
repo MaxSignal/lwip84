@@ -20,7 +20,7 @@
 static uint8_t xram[0x10000];
 static uint8_t *font_blob;
 static long font_len;
-static uint16_t glyph_cp[8192];
+static uint16_t glyph_cp[16575];
 
 void far_read(uint8_t page, uint16_t addr, void *dst, uint16_t len)
 {
@@ -56,7 +56,7 @@ static void font_load(const char *fn)
     for (h = 0; h < 256; h++) {
         int a = font_blob[32 + 2 * h] | font_blob[33 + 2 * h] << 8;
         int b = font_blob[34 + 2 * h] | font_blob[35 + 2 * h] << 8;
-        for (k = a; k < b && k < 8192; k++)
+        for (k = a; k < b && k < 16575; k++)
             glyph_cp[k] = (uint16_t)(h << 8 | font_blob[lo + k]);
     }
 }

@@ -44,7 +44,8 @@ All of it works on a TI-84 Plus (hardware revision 2, boot code 1.00)
 connected to Linux: the OS (LCD, keypad, timer, power off), the USB driver
 and CDC-NCM, ARP, IPv4, ICMP, UDP, TCP, DHCP, DNS and SNTP, TLS 1.3, the web
 browser with forms, search and the Japanese font, and the SSH client
-(tested against OpenSSH 9.6).
+(tested against OpenSSH 9.6). Chinese, Hangul, Arabic and Devanagari text
+and UTF-8 in the SSH terminal are tested in emu84.
 
 ## Applications
 
@@ -168,7 +169,7 @@ make                      # build-84p/lwip84.8xu (OS upgrade) and lwip84.rom
 make MODEL=84pse          # TI-84 Plus Silver Edition
 make DEBUG=1              # debug build: log on the LCD (or in emu84)
 make emu                  # the emulator, build-84p/emu84
-make FONT=other.bdf       # another external font (FONT= for none)
+make FONT=other.txt       # other external fonts (FONT= for none)
 ```
 
 The Makefile looks for SDCC in `../tools/sdcc-4.4.0/bin` and other tools in
@@ -221,27 +222,45 @@ and the console history.
 
 ### External font
 
-Characters that cannot be shown in ASCII are drawn with a bitmap font on the
-flash data pages. The default is [k6x8](https://littlelimit.net/k6x8.htm)
-(6x8 pixels, JIS levels 1 and 2 with kana, Greek and Cyrillic, 7096
-characters), which makes Japanese pages readable.
+Characters that cannot be shown in ASCII are drawn with bitmap fonts on the
+flash data pages (08h-10h, 147 KB). `fonts/fonts.txt` lists them in
+priority order:
 
-- `tools/mkfont84.py` converts a BDF font (cells up to 8x8 pixels, code
-  points up to U+FFFF) into a 64 KB blob: a table by the high byte of the
-  code point, the sorted low bytes, a width bit and 8 bytes of pixels per
-  glyph, and a checksum.
-- `tools/mkrom.py` puts it on pages 08h-0Bh and adds them to the `.8xu`.
+| Font | Scripts |
+|------|---------|
+| [k6x8](https://littlelimit.net/k6x8.htm) (6x8) | Japanese (JIS levels 1 and 2), kana, Greek, Cyrillic, symbols |
+| [QuanPixel](https://diaowinner.itch.io/galmuri-extended) (8x8) | Hangul (4363 syllables), the Han characters of GB 2312 and Big5 level 1 that JIS lacks, bopomofo |
+| [unscii](http://pelulamu.net/unscii/) Arabic (8x8) | Arabic with its contextual forms |
+| [GNU Unifont](https://unifoundry.com/unifont/) Devanagari, halved to 8x8 | Devanagari |
+
+15877 glyphs in all. Scripts that need more than one glyph per character:
+
+- Arabic: the letters of a word are collected and each gets its isolated,
+  initial, medial or final form from its neighbours (lam-alef ligatures are
+  not in the font; harakat are not shown); runs of Arabic on a line are
+  stored right to left. The unscii letters that are missing are made from
+  similar ones (khah from hah plus a dot, ...).
+- Devanagari: words break only at spaces; the vowel sign i is moved in
+  front of its consonant cluster, the other vowel signs and marks are drawn
+  over the glyph before them. No conjunct ligatures.
+- CJK and Hangul: a line may break between any two characters.
+
+How it works:
+
+- `tools/mkfont84.py` builds the blob: a table by the high byte of the code
+  point, the sorted low bytes, 2 bits per glyph (half width, full width,
+  mark) and 8 bytes of pixels per glyph, and a checksum.
+- `tools/mkrom.py` puts it on the data pages and adds them to the `.8xu`.
   mktiupgrade adds the first page of every 64 KB flash sector, and the boot
   code erases a sector when it receives that page, so the data pages are
   written cleanly.
 - `os/font.c` checks the checksum at start-up (the network console's status
   shows `font ok`; without a valid font such characters stay `?`) and finds
   a glyph by binary search, with a cache of recent characters.
-- In page text a glyph takes two cells: a lead byte 01h-1Fh and a trail byte
-  01h-FFh, which together give the glyph number, so text stays a plain
-  string and ASCII keeps its meaning. A row with glyphs is 8 pixels high
-  (7 rows of text), other rows stay 6 pixels (9 rows). Lines may break
-  between two glyphs, as Japanese has no spaces.
+- In text a glyph takes two cells: a lead byte (01h-1Fh, 7Fh, 80h-9Fh or
+  FFh) and a trail byte 01h-FFh, which together give the glyph number (up to
+  16575), so text stays a plain string and ASCII keeps its meaning. A row
+  with glyphs is 8 pixels high (7 rows of text), other rows stay 6 pixels.
 
 A Japanese Wikipedia article is laid out at about 5 KB/s (emu84; English
 pages about 9 KB/s). `html_test -f build-84p/font.bin FILE.html` shows the
@@ -332,6 +351,7 @@ gcc -O2 -DHTML_HOST -I os -o ../tmp/html_test tests/html_test.c os/html.c os/fon
 ## License
 
 BSD (see `COPYING`); lwIP is BSD, `emu/third_party/z80.h` is from
-[floooh/chips](https://github.com/floooh/chips) (zlib), the k6x8 font in
-`fonts/k6x8/` is by Num Kadoma and free to use, copy and modify
-(`fonts/k6x8/k6x8.txt`).
+[floooh/chips](https://github.com/floooh/chips) (zlib), the fonts in
+`fonts/` keep their licenses: k6x8 by Num Kadoma (free to use, copy and
+modify, `fonts/k6x8/k6x8.txt`), QuanPixel (SIL OFL 1.1), unscii (CC0) and GNU
+Unifont (SIL OFL 1.1 or GPL 2+ with the font exception).

@@ -10,8 +10,9 @@ static uint16_t n_glyphs;
 /* recently found code points (Japanese text repeats many characters) */
 #define CACHE 64
 static uint16_t cache_cp[CACHE], cache_g[CACHE];
-static uint32_t lo_off, wide_off, glyph_off;
+static uint32_t lo_off, kind_off, glyph_off;
 static uint8_t cell_w;
+static uint16_t rtl_a0, rtl_a1, rtl_b0, rtl_b1;  /* glyphs of U+06xx, U+FBxx-FExx */
 
 /* bytes at offset off of the font, across flash pages */
 static void font_read(uint32_t off, void *dst, uint16_t len)
@@ -39,12 +40,12 @@ void font_init(void)
     uint8_t i;
     font_ok = 0;
     font_read(0, h, 32);
-    if (memcmp(h, "F84", 4) || h[4] != 1 || h[5] != 8)
+    if (memcmp(h, "F84", 4) || h[4] != 2 || h[5] != 8)
         return;
     n_glyphs = h[8] | (uint16_t)h[9] << 8;
     want = h[10] | (uint16_t)h[11] << 8;
     memcpy(&lo_off, h + 12, 4);
-    memcpy(&wide_off, h + 16, 4);
+    memcpy(&kind_off, h + 16, 4);
     memcpy(&glyph_off, h + 20, 4);
     cell_w = h[6];
     /* the pages must have arrived intact */
@@ -57,6 +58,34 @@ void font_init(void)
     }
     font_ok = sum == want;
     memset(cache_cp, 0, sizeof(cache_cp));
+    if (font_ok) {
+        uint16_t r[2];
+        font_read(32 + 2 * 0x06, r, 4);
+        rtl_a0 = r[0];
+        rtl_a1 = r[1];
+        font_read(32 + 2 * 0xFB, r, 2);
+        rtl_b0 = r[0];
+        font_read(32 + 2 * 0xFF, r, 2);
+        rtl_b1 = r[0];
+    }
+}
+
+char font_lead(uint16_t g)
+{
+    uint8_t h = (uint8_t)(g / 255);
+    return (char)(h < 31 ? h + 1 : h == 31 ? 0x7F : h < 64 ? h - 32 + 0x80 : 0xFF);
+}
+
+uint16_t font_glyph_of(char lead, char trail)
+{
+    uint8_t l = (uint8_t)lead, h;
+    h = l < 0x20 ? l - 1 : l == 0x7F ? 31 : l < 0xA0 ? l - 0x80 + 32 : 64;
+    return (uint16_t)h * 255 + (uint8_t)trail - 1;
+}
+
+uint8_t font_is_rtl(uint16_t g)
+{
+    return (g >= rtl_a0 && g < rtl_a1) || (g >= rtl_b0 && g < rtl_b1);
 }
 
 uint16_t font_find(uint16_t cp)
@@ -87,8 +116,9 @@ uint16_t font_find(uint16_t cp)
 
 uint8_t font_glyph(uint16_t g, uint8_t rows[8])
 {
-    uint8_t w;
+    uint8_t k;
     font_read(glyph_off + (uint32_t)g * 8, rows, 8);
-    font_read(wide_off + (g >> 3), &w, 1);
-    return w & (1 << (g & 7)) ? cell_w : cell_w / 2;
+    font_read(kind_off + (g >> 2), &k, 1);
+    k = (k >> ((g & 3) * 2)) & 3;
+    return k == 2 ? 0 : k == 1 ? cell_w : cell_w / 2;
 }

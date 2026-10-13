@@ -30,17 +30,25 @@ static void draw_glyph(uint8_t x, uint8_t y, const uint8_t *rows, uint8_t n)
 static void draw_cells(const char *s, uint8_t x, uint8_t y_ascii, uint8_t y_glyph,
                        uint8_t n, uint8_t inv_y, uint8_t inv_h)
 {
-    uint8_t rows[8];
+    uint8_t rows[8], last = 0xFF;
     while (*s && x < 96) {
         if (FONT_IS_LEAD(*s) && s[1]) {
+            uint8_t w = font_glyph(FONT_GLYPH(s[0], s[1]), rows);
+            s += 2;
+            if (!w) {
+                /* a mark: over the glyph before it */
+                if (last != 0xFF)
+                    draw_glyph(last, y_glyph, rows, n);
+                continue;
+            }
             if (x + 8 > 96)
                 break;
-            font_glyph(FONT_GLYPH(s[0], s[1]), rows);
             draw_glyph(x, y_glyph, rows, n);
-            s += 2;
+            last = x;
             x += 8;
             continue;
         }
+        last = 0xFF;
         lcd_draw_char(x, y_ascii, *s & 0x7F);
         if ((*s & 0x80) && inv_h)
             lcd_invert_rect(x, inv_y, 4, inv_h);

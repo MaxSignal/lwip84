@@ -113,6 +113,27 @@ static const char latin_bk[] =
     " !cL$Y|S\"ca<-\0R-o+23'uP.,1o>///?AAAAAAACEEEEIIIIDNOOOOOxOUUUUYPsaaaaaaaceeeeiiiidnooooo/ouuuuypy"
     "AaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiIiJjKkkLlLlLlLlLlNnNnNnnNnOoOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyYZzZzZzs";
 
+/* Arabic letters U+0621..U+064A: isolated, final, initial, medial forms
+ * (presentation forms B); letters with two forms join only to the right */
+static const uint16_t arabic_bk[42][4] = {
+    {0xFE80, 0, 0, 0}, {0xFE81, 0xFE82, 0, 0}, {0xFE83, 0xFE84, 0, 0}, {0xFE85, 0xFE86, 0, 0},
+    {0xFE87, 0xFE88, 0, 0}, {0xFE89, 0xFE8A, 0xFE8B, 0xFE8C}, {0xFE8D, 0xFE8E, 0, 0},
+    {0xFE8F, 0xFE90, 0xFE91, 0xFE92}, {0xFE93, 0xFE94, 0, 0}, {0xFE95, 0xFE96, 0xFE97, 0xFE98},
+    {0xFE99, 0xFE9A, 0xFE9B, 0xFE9C}, {0xFE9D, 0xFE9E, 0xFE9F, 0xFEA0},
+    {0xFEA1, 0xFEA2, 0xFEA3, 0xFEA4}, {0xFEA5, 0xFEA6, 0xFEA7, 0xFEA8}, {0xFEA9, 0xFEAA, 0, 0},
+    {0xFEAB, 0xFEAC, 0, 0}, {0xFEAD, 0xFEAE, 0, 0}, {0xFEAF, 0xFEB0, 0, 0},
+    {0xFEB1, 0xFEB2, 0xFEB3, 0xFEB4}, {0xFEB5, 0xFEB6, 0xFEB7, 0xFEB8},
+    {0xFEB9, 0xFEBA, 0xFEBB, 0xFEBC}, {0xFEBD, 0xFEBE, 0xFEBF, 0xFEC0},
+    {0xFEC1, 0xFEC2, 0xFEC3, 0xFEC4}, {0xFEC5, 0xFEC6, 0xFEC7, 0xFEC8},
+    {0xFEC9, 0xFECA, 0xFECB, 0xFECC}, {0xFECD, 0xFECE, 0xFECF, 0xFED0},
+    {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+    {0x0640, 0x0640, 0x0640, 0x0640},   /* tatweel joins on both sides */
+    {0xFED1, 0xFED2, 0xFED3, 0xFED4}, {0xFED5, 0xFED6, 0xFED7, 0xFED8},
+    {0xFED9, 0xFEDA, 0xFEDB, 0xFEDC}, {0xFEDD, 0xFEDE, 0xFEDF, 0xFEE0},
+    {0xFEE1, 0xFEE2, 0xFEE3, 0xFEE4}, {0xFEE5, 0xFEE6, 0xFEE7, 0xFEE8},
+    {0xFEE9, 0xFEEA, 0xFEEB, 0xFEEC}, {0xFEED, 0xFEEE, 0, 0}, {0xFEEF, 0xFEF0, 0, 0},
+    {0xFEF1, 0xFEF2, 0xFEF3, 0xFEF4}};
+
 /* other code points: ranges and their ASCII replacement */
 struct cp_map { uint16_t lo, hi; char s[4]; };
 static const struct cp_map cpmap_bk[] = {
@@ -150,6 +171,7 @@ struct hstate {
     char cap[CAP_MAX + 1];
     char oval[64];
     char sel_label[COLS + 1];
+    uint16_t ar[COLS];                  /* Arabic letters of the current word */
     char ent[12];
     char tname[11], aname[12], rname[10];
     uint8_t stk[STK];
@@ -178,6 +200,8 @@ static uint16_t u_cp;
 
 /* layout */
 static uint8_t col, lmargin, word_n, pending_space, blank, indent, in_pre, upper;
+static uint8_t ar_n, word_glyph_end, deva_cluster;
+static uint16_t deva_last;
 static uint8_t sink, hide, sd, sover, link_pending, cell_sep, row_cells, last_th;
 static uint8_t ld, bq, ddn, ol_mask, in_button, title_cap, cap_n, title_sp, cap_sp;
 static uint8_t olnum[8];
@@ -186,6 +210,8 @@ static char bullet[5];
 /* forms */
 static uint8_t cur_form, in_select, opt_open, opt_sel, opt_has_val, sel_max;
 
+/* arrays in *hs are filled as { a[i] = v; i++; }, not a[i++] = v: for that
+ * SDCC 4.4.0 can lose the address of the array (tools/check_iy.py) */
 #define line (hs->line)
 #define word (hs->word)
 
@@ -250,6 +276,8 @@ void html_begin(uint8_t is_html)
     ld = bq = ddn = ol_mask = in_button = title_cap = cap_n = 0;
     raw_id = 0;
     u_need = unk_run = 0;
+    ar_n = word_glyph_end = 0;
+    deva_cluster = 0xFF;
     bullet[0] = 0;
     cur_form = HTML_NOFORM;
     in_select = opt_open = 0;
@@ -352,8 +380,52 @@ uint16_t html_find_number(uint16_t n, struct html_item *it)
 /* ------------------------------------------------------------------ */
 /* lines                                                               */
 
+/* Arabic is written right to left: runs of Arabic glyphs (with the spaces
+ * between them) are stored in visual order, reversed unit by unit */
+static void rtl_runs(char *buf, uint8_t cols)
+{
+    uint8_t i = 0, rs = 0xFF, re = 0, j, n, k;
+    char tmp[COLS];
+    while (i <= cols) {
+        uint8_t rtl = 0, len = 1;
+        if (i < cols && FONT_IS_LEAD(buf[i]) && i + 1 < cols) {
+            len = 2;
+            rtl = font_is_rtl(FONT_GLYPH(buf[i], buf[i + 1]));
+        }
+        if (rtl) {
+            if (rs == 0xFF)
+                rs = i;
+            re = i + 2;
+        } else if (i == cols || buf[i] != ' ') {
+            if (rs != 0xFF && re - rs > 2) {
+                /* reverse the units of buf[rs..re) */
+                n = 0;
+                j = re;
+                while (j > rs) {
+                    /* the unit that ends at j */
+                    uint8_t u = rs, ul = 1;
+                    k = rs;
+                    while (k < j) {
+                        ul = FONT_IS_LEAD(buf[k]) && k + 1 < j ? 2 : 1;
+                        u = k;
+                        k += ul;
+                    }
+                    memcpy(tmp + n, buf + u, ul);
+                    n += ul;
+                    j = u;
+                }
+                memcpy(buf + rs, tmp, n);
+            }
+            rs = 0xFF;
+        }
+        i += len;
+    }
+}
+
 static void emit_line(void)
 {
+    if (font_ok && col)
+        rtl_runs(line, col);
     if (html_lines < HTML_MAX_LINES) {
         memset(line + col, ' ', COLS - col);
         xram_write(HX_TEXT + (uint32_t)html_lines * COLS, line, COLS);
@@ -381,9 +453,15 @@ static void line_start(void)
     }
 }
 
+static void arabic_flush(void);
+
 static void flush_word(void)
 {
     uint8_t i = 0;
+    if (ar_n)
+        arabic_flush();
+    deva_cluster = 0xFF;
+    word_glyph_end = 0;
     if (!word_n)
         return;
     if (col > lmargin && col + pending_space + word_n > COLS)
@@ -391,7 +469,7 @@ static void flush_word(void)
     if (!col)
         line_start();
     else if (pending_space && col > lmargin)
-        line[col++] = ' ';
+        { line[col] = ' '; col++; }
     pending_space = 0;
     blank = 0;
     while (i < word_n) {
@@ -401,9 +479,9 @@ static void flush_word(void)
             emit_line();
             line_start();
         }
-        line[col++] = word[i++];
+        { line[col] = word[i++]; col++; }
         if (pair)
-            line[col++] = word[i++];
+            { line[col] = word[i++]; col++; }
     }
     word_n = 0;
 }
@@ -471,7 +549,7 @@ static void cell_separator(void)
         if (s == 2) {
             if (word_n == COLS)
                 flush_word();
-            word[word_n++] = ':';
+            { word[word_n] = ':'; word_n++; }
         }
         space();
     }
@@ -494,11 +572,14 @@ static void start_link(void)
     if (word_n + n >= COLS)
         flush_word();
     for (i = 0; i < n; i++)
-        word[word_n++] = m[i];
+        { word[word_n] = m[i]; word_n++; }
 }
 
 static void put_char(char c)
 {
+    if (ar_n)
+        arabic_flush();
+    word_glyph_end = 0;
     if (cell_sep)
         cell_separator();
     if (link_pending)
@@ -507,13 +588,15 @@ static void put_char(char c)
         c -= 32;
     if (word_n == COLS)
         flush_word();
-    word[word_n++] = c;
+    { word[word_n] = c; word_n++; }
 }
 
 /* ASCII character of the page text */
 static void emit_ascii(char c)
 {
     uint8_t n;
+    if (ar_n && sink == SK_TEXT)
+        arabic_flush();
     switch (sink) {
     case SK_TEXT:
         if ((uint8_t)c <= ' ') {
@@ -555,9 +638,21 @@ static void emit_ascii(char c)
     }
 }
 
-/* a glyph of the external font: two cells, a line may break before and
- * after it (no spaces between CJK characters) */
-static void emit_wide(uint16_t g)
+/* append a font glyph to the word */
+static void word_glyph(uint16_t g)
+{
+    if (word_n + 2 > COLS)
+        flush_word();
+    { word[word_n] = FONT_LEAD(g); word_n++; }
+    { word[word_n] = FONT_TRAIL(g); word_n++; }
+    word_glyph_end = 1;
+}
+
+/* a glyph of the external font, two cells.  CJK: a line may break before
+ * and after it (no spaces between the characters).  Devanagari: part of a
+ * word; the vowel sign i is moved before its consonant (cluster).  Marks
+ * stay with the glyph before them. */
+static void emit_glyph(uint16_t g, uint16_t cp)
 {
     uint8_t n;
     switch (sink) {
@@ -566,32 +661,111 @@ static void emit_wide(uint16_t g)
             cell_separator();
         if (link_pending)
             start_link();
-        if (word_n && !(word[word_n - 1] & 0x80))
+        if (cp >= 0x0900 && cp <= 0x097F) {
+            uint8_t at = word_n;
+            if (word_n + 2 > COLS)
+                flush_word();
+            if (cp == 0x093F && deva_cluster != 0xFF && deva_cluster < word_n) {
+                at = deva_cluster;
+                memmove(word + at + 2, word + at, word_n - at);
+                word[at] = FONT_LEAD(g);
+                word[at + 1] = FONT_TRAIL(g);
+                word_n += 2;
+                word_glyph_end = 1;
+            } else {
+                if ((cp >= 0x0915 && cp <= 0x0939) || (cp >= 0x0958 && cp <= 0x095F)) {
+                    if (deva_last != 0x094D || deva_cluster == 0xFF)
+                        deva_cluster = word_n;  /* a new cluster starts */
+                }
+                word_glyph(g);
+            }
+            deva_last = cp;
+            break;
+        }
+        if (word_n && (word_glyph_end || !(word[word_n - 1] & 0x80)))
             flush_word();               /* keep only a link number in front */
-        if (word_n + 2 > COLS)
-            flush_word();
-        word[word_n++] = FONT_LEAD(g);
-        word[word_n++] = FONT_TRAIL(g);
+        word_glyph(g);
         flush_word();
         break;
     case SK_TITLE:
         n = (uint8_t)strlen(html_title);
         if (n + 2 <= COLS) {
-            html_title[n] = FONT_LEAD(g);
-            html_title[n + 1] = FONT_TRAIL(g);
-            html_title[n + 2] = 0;
+            char *p = html_title + n;
+            /* Devanagari vowel sign i: before the glyph before it */
+            if (cp == 0x093F && n >= 2 && FONT_IS_LEAD(p[-2])) {
+                p -= 2;
+                p[4] = 0;
+                p[3] = p[1];
+                p[2] = p[0];
+            } else {
+                p[2] = 0;
+            }
+            p[0] = FONT_LEAD(g);
+            p[1] = FONT_TRAIL(g);
             title_sp = 0;
         }
         break;
     case SK_CAP:
         if (cap_n + 2 <= CAP_MAX) {
             char *p = hs->cap + cap_n;
+            if (cp == 0x093F && cap_n >= 2 && FONT_IS_LEAD(p[-2])) {
+                p -= 2;
+                p[3] = p[1];
+                p[2] = p[0];
+            }
             p[0] = FONT_LEAD(g);
             p[1] = FONT_TRAIL(g);
             cap_n += 2;
             cap_sp = 0;
         }
         break;
+    }
+}
+
+/* Arabic joining type: 0 none, 1 right only, 2 both, 3 transparent (marks) */
+static uint8_t ar_type(uint16_t cp)
+{
+    if ((cp >= 0x064B && cp <= 0x065F) || cp == 0x0670)
+        return 3;
+    if (cp >= 0x0621 && cp <= 0x064A) {
+        const uint16_t *f = arabic_bk[cp - 0x0621];
+        return f[2] ? 2 : f[1] ? 1 : 0;
+    }
+    return 0;
+}
+
+/* the Arabic word is complete: pick each letter's form from its
+ * neighbours (marks are skipped and not shown) */
+static void arabic_flush(void)
+{
+    uint8_t i, n = ar_n, k;
+    ar_n = 0;
+    for (i = 0; i < n; i++) {
+        uint16_t cp = hs->ar[i], out = cp, g;
+        uint8_t t = ar_type(cp), jp = 0, jn = 0, j;
+        if (t == 3)
+            continue;
+        for (j = i; j > 0 && ar_type(hs->ar[j - 1]) == 3; j--)
+            ;
+        if (j > 0 && ar_type(hs->ar[j - 1]) == 2)
+            jp = 1;                     /* the letter before joins to this one */
+        for (k = i + 1; k < n && ar_type(hs->ar[k]) == 3; k++)
+            ;
+        if (t == 2 && k < n && ar_type(hs->ar[k]))
+            jn = 1;                     /* this one joins to the next */
+        if (cp >= 0x0621 && cp <= 0x064A) {
+            const uint16_t *f = arabic_bk[cp - 0x0621];
+            uint8_t form = jp ? (jn ? 3 : 1) : (jn ? 2 : 0);
+            if (f[form])
+                out = f[form];
+        }
+        g = font_find(out);
+        if (g == FONT_NONE)
+            g = font_find(cp);
+        if (g != FONT_NONE)
+            word_glyph(g);
+        else if (word_n < COLS)
+            { word[word_n] = '?'; word_n++; }
     }
 }
 
@@ -632,11 +806,25 @@ static void emit_cp(uint16_t cp)
         }
     }
 font:
+    /* Arabic in the page text: shaped when the word is complete */
+    if (cp >= 0x0621 && cp <= 0x0670 && sink == SK_TEXT && font_ok) {
+        if (ar_n == COLS)
+            arabic_flush();
+        if (cell_sep)
+            cell_separator();
+        if (link_pending)
+            start_link();
+        { hs->ar[ar_n] = cp; ar_n++; }
+        unk_run = 0;
+        return;
+    }
+    if (ar_n)
+        arabic_flush();
     {
         uint16_t g = font_find(cp);
         if (g != FONT_NONE) {
             unk_run = 0;
-            emit_wide(g);
+            emit_glyph(g, cp);
             return;
         }
     }
@@ -804,7 +992,7 @@ static void place_field(struct html_item *it, const char *v, uint16_t idx)
     if (!col)
         line_start();
     else if (pending_space && col > lmargin)
-        line[col++] = ' ';
+        { line[col] = ' '; col++; }
     pending_space = 0;
     blank = 0;
     if (col + total > COLS) {
@@ -820,12 +1008,12 @@ static void place_field(struct html_item *it, const char *v, uint16_t idx)
     }
     memcpy(line + col, m, mn);
     col += mn;
-    line[col++] = open;
+    { line[col] = open; col++; }
     it->pos = (uint16_t)(html_lines * COLS + col);
     value_area(it, v, buf);
     memcpy(line + col, buf, it->width);
     col += it->width;
-    line[col++] = close;
+    { line[col] = close; col++; }
 }
 
 void html_show_field(const struct html_item *it)
@@ -1010,8 +1198,8 @@ static void button_start(void)
     if (word_n + n + 1 >= COLS)
         flush_word();
     for (i = 0; i < n; i++)
-        word[word_n++] = m[i];
-    word[word_n++] = '[';
+        { word[word_n] = m[i]; word_n++; }
+    { word[word_n] = '['; word_n++; }
     in_button = 1;
 }
 
@@ -1438,6 +1626,8 @@ static void raw_end(void)
     update_sink();
     if (id == T_TITLE) {
         html_title[cells_trim(html_title, (uint8_t)strlen(html_title))] = 0;
+        if (font_ok)
+            rtl_runs(html_title, (uint8_t)strlen(html_title));
         title_cap = 0;
     } else if (id == T_TEXTAREA) {
         struct html_item *it = &hs->ta_item;
@@ -1493,7 +1683,7 @@ static void start_tag(void)
         return;
     }
     if (sd < STK) {
-        hs->stk[sd++] = tid;
+        { hs->stk[sd] = tid; sd++; }
         if (tid < T_COUNT)
             hs->open_cnt[tid]++;
     } else {
@@ -1609,7 +1799,7 @@ static void tag_begin(void)
 static void close_cap(void)
 {
     if (cap_open) {
-        hs->abuf[abuf_n++] = 0;
+        { hs->abuf[abuf_n] = 0; abuf_n++; }
         cap_open = 0;
     }
 }
@@ -1661,7 +1851,7 @@ static void value_char(uint8_t c)
         else
             cw_h = (uint16_t)((cw_h << 5) + cw_h + c);
     } else if (cap_open && cap_left && abuf_n + 2 < ABUF) {
-        hs->abuf[abuf_n++] = (char)c;
+        { hs->abuf[abuf_n] = (char)c; abuf_n++; }
         cap_left--;
     }
 }
@@ -1775,11 +1965,11 @@ void html_feed(const uint8_t *p, uint16_t n)
         switch (st) {
         case S_TEXT:
             /* fast path: plain ASCII words */
-            if (sink == SK_TEXT && !link_pending && !cell_sep && !upper && !in_pre) {
+            if (sink == SK_TEXT && !link_pending && !cell_sep && !upper && !in_pre && !ar_n) {
                 if (c > ' ' && c < 0x7F)
                     unk_run = 0;
                 while (c > ' ' && c < 0x7F && c != '<' && c != '&' && word_n < COLS) {
-                    word[word_n++] = (char)c;
+                    { word[word_n] = (char)c; word_n++; }
                     if (++p == end)
                         return;
                     c = *p;
@@ -1831,7 +2021,7 @@ void html_feed(const uint8_t *p, uint16_t n)
             }
             c = (uint8_t)lower((char)c);
             if (tname_n < 10)
-                hs->tname[tname_n++] = (char)c;
+                { hs->tname[tname_n] = (char)c; tname_n++; }
             else
                 tname_long = 1;
             th = (uint8_t)(th * 5 + c);
@@ -1856,7 +2046,7 @@ void html_feed(const uint8_t *p, uint16_t n)
                     continue;
             } else {
                 if (aname_n < sizeof(hs->aname))
-                    hs->aname[aname_n++] = lower((char)c);
+                    { hs->aname[aname_n] = lower((char)c); aname_n++; }
                 else
                     aname_n = 0xFF;     /* too long: unknown */
             }
@@ -1923,7 +2113,7 @@ void html_feed(const uint8_t *p, uint16_t n)
             }
             if (ent_n < 10 && (((c | 32) >= 'a' && (c | 32) <= 'z') || (c >= '0' && c <= '9') ||
                                (c == '#' && !ent_n))) {
-                hs->ent[ent_n++] = (char)c;
+                { hs->ent[ent_n] = (char)c; ent_n++; }
                 break;
             }
             entity_end(0);

@@ -123,12 +123,13 @@ $(B)/lwip84.ihx: $(B)/banked.stamp
 	    $$(cat ../banks.lnk) \
 	    -k $(SDCCLIB) -l z80 ../lwip84.ihx crt0.rel $$(ls *.rel | grep -v '^crt0.rel$$')
 
-# external font on the flash data pages (os/font.h); FONT= for none
-FONT ?= fonts/k6x8/k6x8_gothic.bdf
+# external font on the flash data pages (os/font.h): the fonts listed in
+# FONT (fonts/fonts.txt); FONT= for none
+FONT ?= fonts/fonts.txt
 ifneq ($(FONT),)
 FONT_BIN = $(B)/font.bin
 FONT_ARG = --data 08:$(FONT_BIN)
-$(FONT_BIN): $(FONT) tools/mkfont84.py
+$(FONT_BIN): $(FONT) $(wildcard fonts/*/*) tools/mkfont84.py
 	@mkdir -p $(B)
 	$(PY) tools/mkfont84.py $< $@
 endif

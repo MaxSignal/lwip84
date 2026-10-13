@@ -30,3 +30,7 @@ floooh/chips (zlib license).
 
 fonts/k6x8/ is the k6x8 font by Num Kadoma (free: use, copy and distribute
 with or without modification, see fonts/k6x8/k6x8.txt).
+fonts/quanpixel/ is QuanPixel (SIL Open Font License 1.1, fonts/quanpixel/OFL.txt).
+fonts/unscii/ is from unscii/funscii (CC0 1.0, fonts/unscii/LICENSE.txt).
+fonts/unifont/ is from GNU Unifont (SIL Open Font License 1.1, or GPL 2+ with
+the font embedding exception, fonts/unifont/LICENSE.txt).
