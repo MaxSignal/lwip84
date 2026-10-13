@@ -1,28 +1,38 @@
-/* term.c - a small VT100/xterm subset on the 24x9 text area.
+/* term.c - a small VT100/xterm subset on the 24-column text area.
  *
- * Handles printable ASCII, CR, LF, BS, TAB, cursor movement, erase and
- * scrolling regions are ignored; colours and modes are swallowed.
+ * Handles printable ASCII, UTF-8, CR, LF, BS, TAB, cursor movement, erase;
+ * scrolling regions are ignored; colours and modes are swallowed.  Wide
+ * characters (CJK, kana, Hangul, full-width forms: two columns, as the
+ * server's wcwidth counts them) are drawn with the external font in two
+ * cells (font.h); with a font the rows are 8 pixels high and the terminal
+ * has 7 of them, else 9 rows of 6 pixels.  Accented Latin letters lose
+ * their accents, other characters become '?'.
  * Lines scrolled off the top go to a scrollback ring in extended RAM. */
 #include <stdlib.h>
 #include <string.h>
 #include "kernel.h"
 #include "ui.h"
+#include "font.h"
 #include "term.h"
 
 #define W TERM_COLS
-#define H TERM_ROWS
+#define H term_rows
+#define RH (font_ok ? 8 : 6)            /* pixel rows per text row */
+uint8_t term_rows = 9;
 #define SB_LINES 1024u                  /* 24 KiB scrollback */
 
 static char (*scr)[W];                  /* H rows, allocated by term_open */
-static uint8_t cx, cy, esc, nparam, utf8_skip, wrap_pending;
+static uint8_t cx, cy, esc, nparam, utf8_need, utf8_big, wrap_pending;
+static uint16_t utf8_cp;
 static uint8_t param[4];
 static uint16_t sb_head, sb_count;      /* scrollback ring */
 uint8_t term_dirty;
 
 uint8_t term_open(void)
 {
+    term_rows = font_ok ? 7 : 9;
     if (!scr)
-        scr = malloc(H * W);
+        scr = malloc(TERM_ROWS_MAX * W);
     if (scr)
         term_reset();
     return scr != NULL;
@@ -61,6 +71,29 @@ static void newline(void)
         cy++;
 }
 
+/* cell x of the cursor row is about to be written: if it is half of a
+ * font glyph, blank the other half (the row is read from its start, as a
+ * trail byte may look like a lead byte) */
+static void unpair(uint8_t x)
+{
+    char *r = scr[cy];
+    uint8_t i = 0;
+    while (i < W) {
+        if (FONT_IS_LEAD(r[i]) && i + 1 < W) {
+            if (i == x || i + 1 == x) {
+                r[i] = ' ';
+                r[i + 1] = ' ';
+                return;
+            }
+            i += 2;
+        } else {
+            if (i >= x)
+                return;
+            i++;
+        }
+    }
+}
+
 static void put(char c)
 {
     if (wrap_pending) {
@@ -68,11 +101,73 @@ static void put(char c)
         cx = 0;
         newline();
     }
+    unpair(cx);
     scr[cy][cx] = c;
     if (cx == W - 1)
         wrap_pending = 1;
     else
         cx++;
+}
+
+/* a font glyph in two cells; at the last column it goes to the next line */
+static void put_wide(uint16_t g)
+{
+    if (wrap_pending || cx == W - 1) {
+        if (!wrap_pending)
+            scr[cy][cx] = ' ';
+        wrap_pending = 0;
+        cx = 0;
+        newline();
+    }
+    unpair(cx);
+    unpair(cx + 1);
+    scr[cy][cx] = FONT_LEAD(g);
+    scr[cy][cx + 1] = FONT_TRAIL(g);
+    if (cx + 2 >= W) {
+        cx = W - 1;
+        wrap_pending = 1;
+    } else {
+        cx += 2;
+    }
+}
+
+/* East Asian Wide and Fullwidth (what wcwidth() counts as two columns) */
+static uint8_t is_wide(uint16_t cp)
+{
+    return (cp >= 0x1100 && cp <= 0x115F) || (cp >= 0x2E80 && cp <= 0x303E) ||
+           (cp >= 0x3041 && cp <= 0x33FF) || (cp >= 0x3400 && cp <= 0x4DBF) ||
+           (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0xA000 && cp <= 0xA4CF) ||
+           (cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0xF900 && cp <= 0xFAFF) ||
+           (cp >= 0xFE30 && cp <= 0xFE4F) || (cp >= 0xFF00 && cp <= 0xFF60) ||
+           (cp >= 0xFFE0 && cp <= 0xFFE6);
+}
+
+/* U+00A0..U+017F without accents (as in html.c) */
+static const char latin_bk[] =
+    " !cL$Y|S\"ca<-\0R-o+23'uP.,1o>///?AAAAAAACEEEEIIIIDNOOOOOxOUUUUYPsaaaaaaaceeeeiiiidnooooo/ouuuuypy"
+    "AaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiIiJjKkkLlLlLlLlLlNnNnNnnNnOoOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyYZzZzZzs";
+
+static void put_cp(uint16_t cp)
+{
+    if (cp >= 0xA0 && cp < 0x180) {
+        char c = latin_bk[cp - 0xA0];
+        if (c)
+            put(c);
+        return;
+    }
+    if (cp >= 0x0300 && cp <= 0x036F)   /* combining marks: nothing */
+        return;
+    if (is_wide(cp)) {
+        uint16_t g = font_find(cp);
+        if (g != FONT_NONE) {
+            put_wide(g);
+            return;
+        }
+        put('?');                       /* still two columns for the server */
+        put('?');
+        return;
+    }
+    put('?');
 }
 
 static uint8_t p(uint8_t i, uint8_t def)
@@ -190,9 +285,21 @@ void term_write(const uint8_t *s, uint16_t n)
             esc = 0;
             continue;
         }
-        if (utf8_skip) {
-            utf8_skip--;
-            continue;
+        if (utf8_need) {
+            if ((c & 0xC0) != 0x80) {
+                utf8_need = 0;          /* broken sequence: fall through */
+            } else {
+                utf8_cp = (uint16_t)(utf8_cp << 6 | (c & 0x3F));
+                if (!--utf8_need) {
+                    if (utf8_big) {     /* emoji and the like: two columns */
+                        put('?');
+                        put('?');
+                    } else {
+                        put_cp(utf8_cp);
+                    }
+                }
+                continue;
+            }
         }
         switch (c) {
         case 27:
@@ -218,9 +325,17 @@ void term_write(const uint8_t *s, uint16_t n)
             while (cx & 7 && !wrap_pending);
             break;
         default:
-            if (c >= 0xC0) {
-                utf8_skip = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : 1;
-                put('?');
+            if (c >= 0xF0) {
+                utf8_need = 3;          /* outside the BMP */
+                utf8_big = 1;
+            } else if (c >= 0xE0) {
+                utf8_need = 2;
+                utf8_big = 0;
+                utf8_cp = c & 0x0F;
+            } else if (c >= 0xC0) {
+                utf8_need = 1;
+                utf8_big = 0;
+                utf8_cp = c & 0x1F;
             } else if (c >= 32 && c < 127) {
                 put((char)c);
             }
@@ -244,10 +359,13 @@ void term_draw(uint16_t back)
         } else {
             memcpy(row, scr[line], W);
         }
-        ui_text(r, row);
+        ui_text_at(8 + r * RH, row, RH);
     }
-    if (!back)
-        lcd_invert_rect(cx * 4, 8 + cy * 6, 4, 6);
+    if (!back) {
+        /* the cursor covers a whole glyph when it sits on one */
+        uint8_t w = FONT_IS_LEAD(scr[cy][cx]) && cx + 1 < W ? 8 : 4;
+        lcd_invert_rect(cx * 4, 8 + cy * RH, w, RH);
+    }
     term_dirty = 0;
 }
 

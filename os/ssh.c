@@ -1,6 +1,7 @@
 /* ssh.c - a minimal SSH-2 client: curve25519-sha256 key exchange,
  * chacha20-poly1305@openssh.com, password (or keyboard-interactive)
- * authentication, one interactive shell on a 24x9 pty.
+ * authentication, one interactive shell on a 24x9 pty (24x7 with the
+ * external font, see term.c).
  *
  * Like the TLS client it skips what only protects against an active
  * attacker: the server's host key and signature are not checked, and the
@@ -440,7 +441,7 @@ static void handle_packet(uint8_t *p, uint16_t n)
         pb[pb_n++] = 0;
         put_cstr("vt100");
         put_u32(TERM_COLS);
-        put_u32(TERM_ROWS);
+        put_u32(term_rows);
         put_u32(0);
         put_u32(0);
         put_string("\0", 1);            /* no terminal modes */

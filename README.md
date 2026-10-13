@@ -102,7 +102,11 @@ page keeps up to 1600 lines.
 
 Enter `host[:port]`, the user name and the password. `curve25519-sha256`,
 `chacha20-poly1305@openssh.com`, password or keyboard-interactive login,
-a 24x9 VT100 subset with scrollback. The host key is **not** checked.
+a VT100 subset with scrollback and UTF-8: wide characters (CJK, kana,
+Hangul) are drawn with the external font in two columns, as the server's
+`wcwidth` counts them, accented letters lose their accents, the rest is
+`?`. The terminal is 24x7 with the font (8-pixel rows), else 24x9. The
+host key is **not** checked.
 
 | Key | Sends / does |
 |-----|--------------|
