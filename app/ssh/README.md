@@ -3,6 +3,8 @@
 An SSH client for lwIP-84+ with a small VT100 terminal. **APPS, 2** opens
 it.
 
+![A shell on the calculator](../../docs/ssh-shell.png)
+
 | File | Contents |
 |------|----------|
 | `ssh.c` | SSH transport, key exchange, user authentication, one shell session |

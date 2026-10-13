@@ -3,8 +3,14 @@
 A text web browser for lwIP-84+: HTTP/1.0 and HTTPS with its own HTML
 renderer (no CSS, no JavaScript), forms and search. **APPS, 1** opens it.
 
-![Wikipedia's Zilog Z80 article](../../docs/wikipedia-z80-text.png)
-![The Japanese Wikipedia article on Z80](../../docs/wikipedia-z80-ja.png)
+| English | 日本語 | 中文 | 한국어 |
+|:-:|:-:|:-:|:-:|
+| ![English](../../docs/browser-en.png) | ![Japanese](../../docs/browser-ja.png) | ![Chinese](../../docs/browser-zh.png) | ![Korean](../../docs/browser-ko.png) |
+| **العربية** | **Русский** | **Ελληνικά** | **हिन्दी** |
+| ![Arabic](../../docs/browser-ar.png) | ![Russian](../../docs/browser-ru.png) | ![Greek](../../docs/browser-el.png) | ![Hindi](../../docs/browser-hi.png) |
+
+The Z80 articles of Wikipedia in each language (in Hindi, the article on
+microprocessors), in emu84.
 
 | File | Contents |
 |------|----------|
