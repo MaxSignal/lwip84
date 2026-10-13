@@ -16,6 +16,8 @@ void k_delay_ms(uint16_t ms);
 #define CON_ROWS 9                /* below the status line */
 extern uint8_t lcd_buf[768];
 void lcd_init(void);
+extern uint8_t lcd_contrast;            /* 0..39 as in TI-OS */
+void lcd_set_contrast(uint8_t level);
 void lcd_update(void);
 void lcd_clear(void);
 void lcd_invert_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h);

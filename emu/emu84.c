@@ -497,8 +497,9 @@ static void port_out(uint8_t p, uint8_t v)
             int bad = -1;
             /* below TI-OS's SP (FFEEh) the way back made calls */
             for (int i = 0; i < 2 * 0x4000 && bad < 0; i++)
-                if (ti.ram[i] != ti.app_ram[i] && !(i >= 0x3FE0 && i < 0x3FEE))
+                if (ti.ram[i] != ti.app_ram[i] && !(i >= 0x3FE0 && i < 0x3FEE) && i != 0x4447)
                     bad = i;
+            fprintf(stderr, "emu84: contrast at 8447h: %u\n", ti.ram[0x4447]);
             fprintf(stderr, "emu84: app exit to TI-OS: SP %04X, port 03 %02X, "
                     "RAM %s", (unsigned)ti.cpu.sp, ti.int_mask, bad < 0 ? "restored\n" : "");
             if (bad >= 0)
@@ -782,6 +783,7 @@ int main(int argc, char **argv)
             ti.ram[i] = (uint8_t)(i * 7 + (i >> 8) + 3);
         ti.ram[0x3FEE] = 0x18;
         ti.ram[0x3FEF] = 0x00;
+        ti.ram[0x4447] = 20;            /* contrast (8447h), 0-39 */
         memcpy(ti.app_ram, ti.ram, sizeof(ti.app_ram));
         n = 0x4000;
     } else {

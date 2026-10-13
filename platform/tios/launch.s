@@ -46,6 +46,11 @@ launch:
 	add	ix, sp				; TI-OS's stack
 	ld	a, i				; I in A'
 	ex	af, af'
+	ld	a, (0x8447)			; TI-OS's contrast, in IYH
+	ld	iy, #0
+	ld	c, a
+	ld	b, #0
+	add	iy, bc
 	in	a, (0x06)			; this page: the base
 	exx
 	ld	b, a
@@ -144,11 +149,20 @@ ram128:
 	ld	(___app_save + 1), ix
 	ex	af, af'
 	ld	(___app_save + 8), a
+	push	iy				; the stack is ours again
+	pop	bc
+	ld	a, c
+	ld	(___app_save + 9), a
 	jp	app_init
 
 leave:
 	di
 	ld	ix, (___app_save + 1)
+	ld	a, (___app_save + 9)		; the app's contrast, in IY
+	ld	c, a
+	ld	b, #0
+	ld	iy, #0
+	add	iy, bc
 	ld	a, (___app_save + 8)
 	ex	af, af'
 	exx
@@ -195,8 +209,12 @@ leave:
 	ex	af, af'
 	ld	i, a
 	im	1
-	;; the LCD as TI-OS left it: its contrast (8447h) and 8-bit, X increment
-	ld	a, (0x8447)
+	;; the contrast as the app left it, also for TI-OS (8447h), and the
+	;; LCD modes TI-OS expects: 8-bit, X increment
+	push	iy
+	pop	bc
+	ld	a, c
+	ld	(0x8447), a
 	add	a, #0xD8
 	call	lcd_cmd
 	ld	a, #0x01

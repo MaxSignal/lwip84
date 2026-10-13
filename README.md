@@ -72,8 +72,10 @@ and UTF-8 in the SSH terminal are tested in emu84.
 ## Using the calculator
 
 The OS starts in the network console; **APPS** opens the menu (1 web
-browser, 2 SSH client, 3 network console). **2nd+ON** turns the calculator
-off, **ON** turns it on again.
+browser, 2 SSH client, 3 network console, 4 input languages). **2nd+ON**
+turns the calculator off, **ON** turns it on again. **2nd, then UP/DOWN**
+changes the contrast as in TI-OS (its digit 0-9 shows in the top right
+corner; 2nd stays on for more arrows).
 
 ### Typing
 

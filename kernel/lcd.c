@@ -37,18 +37,46 @@ static void lcd_out_cmd(uint8_t c)
     port_lcd_cmd = c;
 }
 
+/* contrast as in TI-OS: 0..39, command D8h + level; kept over power off
+ * (the TI-OS app starts with TI-OS's and gives it back) */
+uint8_t lcd_contrast = 24;
+
+/* a command with a generous pause around it, for the set-up */
+static void lcd_slow_cmd(uint8_t c)
+{
+    uint8_t i;
+    for (i = 0; i < 5; i++)
+        lcd_wait();
+    port_lcd_cmd = c;
+    for (i = 0; i < 5; i++)
+        lcd_wait();
+}
+
 void lcd_init(void)
 {
-    lcd_out_cmd(0x01);        /* 8-bit transfers */
-    lcd_out_cmd(0x05);        /* auto-increment rows (X) */
-    lcd_out_cmd(0x40);        /* z-address 0 */
 #ifndef TI84P_APP
-    lcd_out_cmd((uint8_t)0xF0);   /* contrast (in TI-OS: its own) */
+    /* the power settings of the boot code: they are not always left set
+     * (a dark screen until the boot code ran again) */
+    lcd_slow_cmd(0x17);       /* power supply level */
+    lcd_slow_cmd(0x0B);       /* power supply enhancement */
 #endif
-    lcd_out_cmd(0x03);        /* display on */
+    lcd_slow_cmd(0x01);       /* 8-bit transfers */
+    lcd_slow_cmd(0x05);       /* auto-increment rows (X) */
+    lcd_slow_cmd(0x40);       /* z-address 0 */
+    lcd_slow_cmd((uint8_t)(0xD8 + lcd_contrast));
+    lcd_slow_cmd(0x03);       /* display on */
     lcd_clear();
     lcd_update();
 }
+
+void lcd_set_contrast(uint8_t level)
+{
+    if (level > 39)
+        level = 39;
+    lcd_contrast = level;
+    lcd_slow_cmd((uint8_t)(0xD8 + level));
+}
+
 
 void lcd_update(void)
 {

@@ -35,9 +35,12 @@ void __app_exit(void);                  /* platform/tiplatform/os/crt0.s */
 
 static uint8_t main_r;
 
+extern uint8_t __app_save[];            /* platform/tios/crt0.s */
+
 static void quit(void)
 {
     usb_stop();                         /* TI-OS gets its USB controller back */
+    __app_save[9] = lcd_contrast;       /* and the contrast as it is now */
     __app_exit();
 }
 
@@ -50,6 +53,7 @@ void main(void)
     __asm__("ei");
     k_detect_platform();
     heap_init();
+    lcd_contrast = __app_save[9] <= 39 ? __app_save[9] : 24;   /* TI-OS's */
     lcd_init();
     con_clear();
     font_init();
@@ -92,6 +96,8 @@ void main(void)
                 app_enter();            /* draw it again */
             }
         }
+        if (k && in_contrast_key(k))
+            k = K_NONE;
         if (k) {
             if (!app_key(k))
                 quit();

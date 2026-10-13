@@ -21,6 +21,10 @@ const char *in_mode_str(void);
  * result is IN_MODE_CHANGED or IN_PICK, which commit the composition */
 int16_t in_text(uint8_t k, char *out);
 
+/* 2nd+UP/DOWN: the LCD contrast; 1 if the key was taken (call it before
+ * the application gets the key) */
+uint8_t in_contrast_key(uint8_t k);
+
 /* conversion keys (UP/DOWN candidate, LEFT/RIGHT part, ENTER, DEL/CLEAR):
  * 1 if the key was one; committed text in out (IME_OUT_MAX) */
 uint8_t in_conv_key(uint8_t k, char *out);

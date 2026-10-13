@@ -272,6 +272,8 @@ void main(void)
                     app_switch(app);
             }
         }
+        if (k && in_contrast_key(k))
+            k = K_NONE;
         if (k && app_key(k))
             k = K_NONE;
         switch (k) {

@@ -130,6 +130,34 @@ uint8_t in_conv_key(uint8_t k, char *out)
     return 0;
 }
 
+/* 2nd, then UP/DOWN as often as needed: the contrast, with its digit 0-9
+ * in the top right corner as TI-OS shows it.  2nd stays on for the next
+ * arrow; any other key ends it. */
+uint8_t in_contrast_key(uint8_t k)
+{
+    static uint8_t adjusting;
+    uint8_t *p, r;
+    if (!in_2nd || (k != K_UP && k != K_DOWN)) {
+        if (adjusting && k != K_2ND)
+            in_2nd = 0;
+        adjusting = 0;
+        return 0;
+    }
+    if (k == K_UP && lcd_contrast < 39)
+        lcd_set_contrast(lcd_contrast + 1);
+    else if (k == K_DOWN && lcd_contrast)
+        lcd_set_contrast(lcd_contrast - 1);
+    adjusting = 1;
+    /* white on the status line's black, at its right end */
+    p = lcd_buf + 11;
+    for (r = 0; r < 7; r++, p += 12)
+        *p &= 0xF0;
+    lcd_draw_char(92, 1, (char)('0' + lcd_contrast / 4));
+    lcd_invert_rect(92, 0, 4, 7);
+    lcd_update();
+    return 1;
+}
+
 /* ---- the language list ---- */
 
 static uint8_t pick_items[IME_N], pick_n, pick_sel, pick_top;

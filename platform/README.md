@@ -47,12 +47,14 @@ comes first. `launch.s` is the app's first page: the header, the start at
 
 - Start: interrupts off; if pages 86h and 87h are one page (48 KiB of RAM)
   back to TI-OS at once; save TI-OS's RAM pages 81h and 80h in 87h and 86h,
-  its stack pointer, I and the ports 03h, 04h, 05h, 07h and 20h; copy the
+  its stack pointer, I, the ports 03h, 04h, 05h, 07h and 20h and its
+  contrast (8447h, which the app starts with); copy the
   RAM image from the app's first page to 8184h; `crt0.s` sets up IM 2,
   clears the data and calls `main`.
 - Exit (`__app_exit`): stop the USB controller, then on the app's first
   page: copy 87h and 86h back, restore the ports, the stack pointer, I and
-  IM 1, the LCD contrast and mode of TI-OS, and `B_JUMP _JForceCmdNoChar`.
+  IM 1, the contrast as the app left it (also into 8447h) and the LCD mode
+  of TI-OS, and `B_JUMP _JForceCmdNoChar`.
 - Far calls: TI-OS owns `RST 10h`, so a thunk is `CALL ___farcall_rst`
   (6 bytes, `banker.py --call-thunks`), and the page in it is the app's
   logical page n, which TI-OS put on flash page (first page - n).

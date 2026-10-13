@@ -38,9 +38,10 @@
 	.area	_HOME
 ;; filled in by the launcher before app_init:
 ;;   +0 base page, +1..2 TI-OS SP, +3 port 03h, +4 port 04h, +5 port 05h,
-;;   +6 port 07h, +7 port 20h, +8 I
+;;   +6 port 07h, +7 port 20h, +8 I, +9 TI-OS's contrast (8447h; main.c
+;;   puts the app's back here before the exit)
 ___app_save::
-	.ds	9
+	.ds	10
 
 app_init::
 	ld	sp, #0x0000

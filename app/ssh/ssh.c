@@ -9,7 +9,7 @@
  *
  * Keys:  ENTER  return        DEL  backspace      CLEAR  Ctrl-C
  *        VARS   tab          MODE  Esc            XT0n  Ctrl- next key
- *        arrows  cursor keys  2nd+UP/DOWN  scrollback
+ *        arrows  cursor keys  2nd+LEFT/RIGHT  scrollback (2nd+UP/DOWN: contrast)
  *        2nd+MODE  disconnect and quit
  */
 #include <stdlib.h>
@@ -808,10 +808,11 @@ uint8_t ssh_key(uint8_t k)
         ssh_leave();
         return 0;
     }
-    if (in_2nd && (k == K_UP || k == K_DOWN)) {
-        if (k == K_UP && back < term_scrollback())
+    if (in_2nd && (k == K_LEFT || k == K_RIGHT)) {
+        /* scrollback (2nd+UP/DOWN is the contrast) */
+        if (k == K_LEFT && back < term_scrollback())
             back += 4;
-        else if (k == K_DOWN)
+        else if (k == K_RIGHT)
             back = back > 4 ? back - 4 : 0;
         draw();
         return 1;

@@ -21,7 +21,7 @@ the [main README](../../README.md#typing)).
 | CLEAR, VARS, MODE | Ctrl-C, Tab, Esc |
 | XT,θ,n then a key | Ctrl + that key (for example XT,θ,n then D: Ctrl-D) |
 | arrows | cursor keys |
-| 2nd+UP / 2nd+DOWN | scroll back / forward |
+| 2nd+LEFT / 2nd+RIGHT | scroll back / forward |
 | 2nd+MODE | disconnect and return to the menu |
 
 ## What it does
