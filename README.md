@@ -27,13 +27,13 @@ git clone --recursive https://github.com/MaxSignal/lwip84.git
 | `lib/net/` | the network library: lwIP glue, sockets, TLS 1.3 |
 | `lib/crypto/` | SHA-256/HMAC/HKDF, ChaCha20/Poly1305, AES-128/GCM, X25519, random numbers |
 | `lib/font/` | the external font (Japanese, Chinese, Hangul, Arabic, Devanagari, ...) |
-| `lib/ime/` | input methods: kana, Hangul, Cyrillic, Greek, Arabic, Devanagari |
+| `lib/ime/` | input methods: Japanese (kana-kanji conversion), Chinese (pinyin), Hangul, Cyrillic, Greek, Arabic, Devanagari |
 | [`app/browser/`](app/browser/README.md) | web browser |
 | [`app/ssh/`](app/ssh/README.md) | SSH client |
 | [`app/console/`](app/console/README.md) | network console and socket examples |
 | `emu/` | `emu84`, a headless emulator with a USB host |
 | `tools/`, `tests/` | build tools, code generators, host tests (more under `app/*/tests/` and `lib/ime/tests/`) |
-| `fonts/`, `patches/`, `lwip/` | font sources, the lwIP fix, lwIP |
+| `fonts/`, `dict/`, `patches/`, `lwip/` | font sources, conversion dictionaries, the lwIP fix, lwIP |
 
 ## Connecting
 
@@ -82,7 +82,7 @@ off, **ON** turns it on again.
 
 ### Other languages
 
-**2nd, ALPHA** opens the list of input languages (0-7 or UP/DOWN and
+**2nd, ALPHA** opens the list of input languages (0-8 or UP/DOWN and
 ENTER); the chosen one joins the ALPHA cycle after `a` (Cyrillic and Greek
 twice: capitals, then small letters). **APPS, 4** chooses the languages the
 list offers. In a language the letter keys type Latin letters that become
@@ -95,7 +95,8 @@ put in.
 
 | Language | Typing |
 |----------|--------|
-| Japanese, katakana | romaji as on a PC: `nihongo` にほんご, `kitte` きって, `nn` or `n'` ん, `xa` ぁ, `-` ー, `.` 。 `,` 、. Japanese collects kana until ENTER; katakana are put in at once |
+| Japanese, katakana | romaji as on a PC: `nihongo` にほんご, `kitte` きって, `nn` or `n'` ん, `xa` ぁ, `-` ー, `.` 。 `,` 、. Japanese collects kana until ENTER or conversion; katakana are put in at once |
+| Chinese | pinyin without tones (`v` for ü), converted with the space key: `ni` 你, `hao` 好; `,` `.` give ， 。 |
 | Korean | the dubeolsik layout by letter: `gksrmf` 한글 (r ㄱ s ㄴ e ㄷ f ㄹ a ㅁ q ㅂ t ㅅ d ㅇ w ㅈ c ㅊ z ㅋ x ㅌ v ㅍ g ㅎ; k ㅏ o ㅐ i ㅑ j ㅓ p ㅔ u ㅕ h ㅗ y ㅛ n ㅜ b ㅠ m ㅡ l ㅣ); a doubled initial is tense (`rr` ㄲ), `il` ㅒ, `ul` ㅖ |
 | Russian | `privet` привет: `zh` ж `ch` ч `sh` ш `shh`/`sch`/`w` щ `c` ц `h`/`x`/`kh` х `y` ы `j` й `yo` ё `yu` ю `ya` я `e'` э `'` ь `''` ъ |
 | Greek | `kalhme'ra` καλημέρα: `h` η `th` θ `x`/`ks` ξ `ps` ψ `c`/`ch` χ `w` ω `u`/`y` υ, `'` after a vowel for the accent, `s` at the end of a word ς |
@@ -104,6 +105,19 @@ put in.
 
 Arabic and Devanagari are shown in the line as typed (left to right,
 without the forms of the browser).
+
+**Conversion** (Japanese, Chinese): the space key converts the start of the
+composition, as much of it as the dictionary knows as one word, and shows
+the candidates on the line above (the current one first, `i/n`). Space or
+DOWN takes the next candidate, UP the one before, LEFT/RIGHT make the
+converted part one character shorter or longer, ENTER puts the candidate
+in (the rest stays to be converted), DEL goes back to the kana. Japanese
+candidates end with the kana and katakana. The dictionaries
+(`dict/`, flash pages 08h-0Fh) hold 11,600 Japanese words from Mozc's open
+dictionary, chosen by frequency (nouns first, the forms of verbs that
+others follow), and the 6,900 simplified characters of GB 2312 by pinyin,
+ordered by frequency (Unihan). A word that is not there can be put
+together from single characters.
 
 ## Security
 
@@ -191,7 +205,8 @@ does not run code on pages 08h-29h (08h-69h on the SE), so code is on pages
 of the TI-84 Plus writes a page sent as 10h-1Fh to 30h-3Fh and did not take
 2Ch-32h (`tools/pagetest.sh` sends marked pages, the debug build's Y= shows
 where they landed), so data is on pages 08h-0Fh and 20h-2Bh: the external
-font on 20h-29h, the browser's Shift_JIS table on 2Ah-2Bh, the rest is free. `tools/mkrom.py` refuses the other pages.
+font on 20h-29h, the browser's Shift_JIS table on 2Ah-2Bh, the conversion
+dictionaries on 08h-0Fh. `tools/mkrom.py` refuses the other pages.
 
 The six other RAM pages (96 KiB) are reached through `xram_read` /
 `xram_write` and hold the web page (64 KiB), the SSH scrollback (24 KiB),
@@ -305,7 +320,8 @@ gcc -O2 -o ../tmp/z80run tests/z80run.c
 python3 tests/asm_test.py aes 30           # also sha256, poly1305, ghash: Z80 code vs Python
 gcc -O2 -I lib/crypto -I tests -o ../tmp/aes_test tests/aes_test.c lib/crypto/aes.c && ../tmp/aes_test
 gcc -O2 -I lib/crypto -o ../tmp/crypto_test tests/crypto_test.c lib/crypto/sha256.c lib/crypto/chacha.c lib/crypto/x25519.c && ../tmp/crypto_test
-gcc -O2 -I lib/ime -o ../tmp/ime_test lib/ime/tests/ime_test.c lib/ime/ime.c && ../tmp/ime_test
+gcc -O2 -DDICT_HOST -I lib/ime -o ../tmp/ime_test lib/ime/tests/ime_test.c lib/ime/ime.c lib/ime/dict.c
+../tmp/ime_test build-84p/dict.bin        # without the file: no conversion
 ```
 
 ## License

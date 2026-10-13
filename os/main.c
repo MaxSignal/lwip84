@@ -27,6 +27,7 @@
 #include "ui.h"
 #include "rng.h"
 #include "font.h"
+#include "dict.h"
 
 uint8_t browser_enter(void);
 uint8_t browser_key(uint8_t k);
@@ -125,7 +126,8 @@ static void show_info(void)
     if (net84_netif)
         con_printf("gw %s\n", ip4addr_ntoa(netif_ip4_gw(net84_netif)));
     con_printf("dns %s\n", ipaddr_ntoa(dns_getserver(0)));
-    con_printf("heap %u free, font %s\n", heap_free_bytes(), font_ok ? "ok" : "none");
+    con_printf("heap %u free, font %s, dict %s\n", heap_free_bytes(), font_ok ? "ok" : "none",
+               dict_ok ? "ok" : "none");
 #ifdef TI84P_DEBUG
     /* the font pages as they are on flash: first bytes and 16-bit sum of
        each page, to compare with the ROM image (tools/pagesums.py) */
@@ -264,6 +266,7 @@ void main(void)
     font_init();
     if (!font_ok)
         con_puts("no font: non-ASCII text as ?\n");
+    dict_init();
     net84_init();
     dbg_printf("lwip up, heap %u%s\n", heap_free_bytes(), k_is_emulator ? " (emu)" : "");
     if (usb_last_error)

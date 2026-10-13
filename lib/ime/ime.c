@@ -7,6 +7,7 @@
  * syllable from its jamo. */
 #include <string.h>
 #include "ime.h"
+#include "dict.h"
 
 uint8_t ime_lang, ime_upper;
 uint16_t ime_enabled = 0xFFFF;
@@ -14,7 +15,13 @@ char ime_pre[IME_PRE_MAX + 1];
 
 static char rom[8];             /* letters not converted yet */
 static uint8_t rom_n;
-static uint8_t kana_n;          /* Japanese: kana at the start of ime_pre */
+static char comp[IME_PRE_MAX + 1];  /* Japanese kana, Chinese pinyin */
+static uint8_t kana_n;          /* bytes in comp */
+uint8_t ime_converting, ime_conv_n;
+static uint8_t seg_n, seg_max;  /* converted part: characters, longest */
+static uint8_t seg_b;           /* its bytes in comp */
+static uint8_t cand_i, cand_n, dict_n;
+static uint32_t cand_at;
 static uint8_t hi_cons;         /* Devanagari: last letter was a consonant */
 static char *out_p;             /* where emitted text goes */
 
@@ -120,17 +127,17 @@ static const char *table(void)
 }
 
 static const char *const labels_bk[IME_N] = {
-    "", "あ", "ア", "한", "Я", "Ω", "ع", "ह"
+    "", "あ", "ア", "한", "拼", "Я", "Ω", "ع", "ह"
 };
 /* as drawn: Arabic in its contextual forms from right to left, the
  * Devanagari vowel sign i before its consonant */
 static const char *const titles_bk[IME_N] = {
-    "", "日本語 (ひらがな)", "カタカナ", "한국어", "Русский", "Ελληνικά",
+    "", "日本語 (ひらがな)", "カタカナ", "한국어", "中文 (拼音)", "Русский", "Ελληνικά",
     "ﺔﻴﺑﺮﻌﻟﺍ", "िहन्दी"
 };
 
 static const char *const labels_lower_bk[IME_N] = {
-    "", "あ", "ア", "한", "я", "ω", "ع", "ह"
+    "", "あ", "ア", "한", "拼", "я", "ω", "ع", "ह"
 };
 
 const char *ime_label(uint8_t l)
@@ -152,7 +159,7 @@ uint8_t ime_has_case(uint8_t l)
 
 uint8_t ime_converts(uint8_t l)
 {
-    return l == IME_JA;
+    return l == IME_JA || l == IME_ZH;
 }
 
 /* ---- UTF-8 ---- */
@@ -215,10 +222,11 @@ static void emit_text(const char *s, uint8_t n)
 {
     const char *end = s + n;
     uint16_t cp;
-    if (ime_lang == IME_JA) {
+    if (ime_lang == IME_JA || ime_lang == IME_ZH) {
         if (kana_n + n <= IME_PRE_MAX - sizeof(rom)) {
-            memcpy(ime_pre + kana_n, s, n);
+            memcpy(comp + kana_n, s, n);
             kana_n += n;
+            comp[kana_n] = 0;
         }
         return;
     }
@@ -481,16 +489,35 @@ static void ko_key(char c)
 
 /* ---- the interface ---- */
 
+static void cand_text(uint8_t i, char *out);
+static void conv_start(void);
+
 static void show(void)
 {
+    uint8_t n;
     if (ime_lang == IME_KO)
         return;
+    if (ime_converting) {
+        /* the candidate, then the rest of the composition */
+        char c[IME_PRE_MAX + 1];
+        cand_text(cand_i, c);
+        n = (uint8_t)strlen(c);
+        ime_conv_n = n;
+        memcpy(ime_pre, c, n);
+        strncpy(ime_pre + n, comp + seg_b, IME_PRE_MAX - n);
+        ime_pre[IME_PRE_MAX] = 0;
+        return;
+    }
+    ime_conv_n = 0;
+    memcpy(ime_pre, comp, kana_n);
     memcpy(ime_pre + kana_n, rom, rom_n + 1);
 }
 
 void ime_reset(void)
 {
     rom_n = kana_n = hi_cons = 0;
+    comp[0] = 0;
+    ime_converting = ime_conv_n = 0;
     rom[0] = 0;
     ko_cho = ko_jung = -1;
     ko_jong = ko_hn = 0;
@@ -504,9 +531,13 @@ void ime_flush(char *out)
     if (ime_lang == IME_KO) {
         ko_commit();
     } else {
+        if (ime_converting) {
+            ime_conv_commit(out);
+            out_p = out + strlen(out);
+        }
         resolve(1);
         if (kana_n) {
-            memcpy(out_p, ime_pre, kana_n);
+            memcpy(out_p, comp, kana_n);
             out_p[kana_n] = 0;
         }
     }
@@ -526,8 +557,41 @@ void ime_feed(char c, char *out)
         emit_literal(c);
         return;
     }
+    if (ime_converts(ime_lang) && (ime_converting || kana_n || rom_n)) {
+        if (c == ' ') {                 /* convert, or the next candidate */
+            if (ime_converting)
+                ime_conv_next(1);
+            else
+                conv_start();
+            return;
+        }
+        if (ime_converting) {
+            ime_conv_commit(out);
+            out_p = out + strlen(out);
+        }
+    }
+    if (ime_lang == IME_ZH) {
+        /* pinyin letters collect; other characters end it */
+        if (is_letter(c)) {
+            emit_literal(c);
+        } else {
+            char o[IME_OUT_MAX], *dst = out_p;
+            ime_flush(o);
+            out_p = dst;
+            strcpy(out_p, o);
+            out_p += strlen(o);
+            if (c == ',' || c == '.') {
+                put_cp(c == ',' ? 0xFF0C : 0x3002);
+            } else {
+                *out_p++ = c;
+                *out_p = 0;
+            }
+        }
+        show();
+        return;
+    }
     if (c == ' ') {
-        ime_flush(out);
+        ime_flush(out_p);
         out_p = out + strlen(out);
         emit_literal(' ');
         return;
@@ -557,16 +621,200 @@ uint8_t ime_back(void)
         ko_show();
         return 1;
     }
+    if (ime_converting) {
+        ime_conv_cancel();
+        return 1;
+    }
     if (rom_n) {
         rom[--rom_n] = 0;
     } else if (kana_n) {
         /* the last kana: drop its UTF-8 continuation bytes too */
         do
             kana_n--;
-        while (kana_n && ((uint8_t)ime_pre[kana_n] & 0xC0) == 0x80);
+        while (kana_n && ((uint8_t)comp[kana_n] & 0xC0) == 0x80);
+        comp[kana_n] = 0;
     } else {
         return 0;
     }
     show();
     return 1;
+}
+
+/* ---- conversion ---- */
+
+/* comp from byte b: the dictionary code of the kana there (0: not one) and
+ * its length */
+static uint8_t kana_code(uint8_t b, uint8_t *len)
+{
+    uint16_t cp;
+    const char *p = comp + b;
+    *len = 1;
+    if ((uint8_t)*p < 0x80)
+        return 0;
+    get_cp(p, &cp);
+    *len = ((uint8_t)*p & 0xE0) == 0xE0 ? 3 : 2;
+    if (cp >= 0x3041 && cp <= 0x3096)
+        return (uint8_t)(cp - 0x3040);
+    return cp == 0x30FC ? 0x57 : 0;
+}
+
+/* candidates of the first n characters of comp */
+static void lookup(uint8_t n)
+{
+    uint8_t key[15], i, b = 0, len;
+    seg_n = n;
+    dict_n = 0;
+    if (ime_lang == IME_JA) {
+        for (i = 0; i < n; i++) {
+            key[i] = kana_code(b, &len);
+            b += len;
+        }
+        seg_b = b;
+        dict_n = dict_ja_find(key, n, &cand_at);
+        cand_n = dict_n + 2;            /* + hiragana, katakana */
+    } else {
+        uint16_t z;
+        seg_b = n;
+        z = dict_zh_find(comp, n, &cand_at);
+        dict_n = z > 250 ? 250 : (uint8_t)z;
+        cand_n = dict_n + 1;            /* + the letters */
+    }
+    cand_i = 0;
+}
+
+static void conv_start(void)
+{
+    uint8_t b = 0, n = 0, len, i;
+    resolve(1);
+    if (!kana_n)
+        return;
+    /* how far the kana (letters) go */
+    if (ime_lang == IME_JA) {
+        while (b < kana_n && n < 15 && kana_code(b, &len)) {
+            b += len;
+            n++;
+        }
+    } else {
+        while (n < kana_n && n < 6 && is_letter(comp[n]))
+            n++;
+    }
+    if (!n) {                           /* not convertible: put it in as it is */
+        return;
+    }
+    seg_max = n;
+    ime_converting = 1;
+    /* the longest reading the dictionary knows */
+    for (i = n; i; i--) {
+        lookup(i);
+        if (dict_n)
+            break;
+    }
+    if (!dict_n)
+        lookup(n);
+    show();
+}
+
+static void cand_text(uint8_t i, char *out)
+{
+    char *save = out_p;
+    if (i < dict_n) {
+        if (ime_lang == IME_JA) {
+            dict_ja_word(cand_at, i, out);
+        } else {
+            out_p = out;
+            put_cp(dict_zh_char(cand_at, i));
+            out_p = save;
+        }
+        return;
+    }
+    memcpy(out, comp, seg_b);
+    out[seg_b] = 0;
+    if (ime_lang == IME_JA && i == dict_n + 1) {
+        /* katakana: the third byte of hiragana E3 81 xx / E3 82 xx */
+        uint8_t k;
+        uint16_t cp;
+        out_p = out;
+        for (k = 0; k < seg_b; ) {
+            const char *p = comp + k;
+            get_cp(p, &cp);
+            k += ((uint8_t)*p & 0xE0) == 0xE0 ? 3 : ((uint8_t)*p < 0x80 ? 1 : 2);
+            put_cp(cp >= 0x3041 && cp <= 0x3096 ? cp + 0x60 : cp);
+        }
+        out_p = save;
+    }
+}
+
+void ime_conv_next(int8_t d)
+{
+    if (!ime_converting)
+        return;
+    cand_i = d > 0 ? (cand_i + 1 < cand_n ? cand_i + 1 : 0)
+                   : (cand_i ? cand_i - 1 : cand_n - 1);
+    show();
+}
+
+void ime_conv_resize(int8_t d)
+{
+    if (!ime_converting)
+        return;
+    if (d < 0 && seg_n > 1)
+        lookup(seg_n - 1);
+    else if (d > 0 && seg_n < seg_max)
+        lookup(seg_n + 1);
+    show();
+}
+
+void ime_conv_commit(char *out)
+{
+    if (!ime_converting) {
+        *out = 0;
+        return;
+    }
+    cand_text(cand_i, out);
+    /* the rest stays in the composition */
+    kana_n -= seg_b;
+    memmove(comp, comp + seg_b, kana_n + 1);
+    ime_converting = 0;
+    show();
+}
+
+void ime_conv_cancel(void)
+{
+    ime_converting = 0;
+    show();
+}
+
+void ime_cand_list(char *out, uint8_t max)
+{
+    uint8_t i, n;
+    char c[IME_PRE_MAX + 1];
+    char *save = out_p;
+    out_p = out;
+    *out = 0;
+    if (ime_converting) {
+        /* i/n, then the candidates from the current one */
+        i = cand_i + 1;
+        if (i >= 100)
+            *out_p++ = (char)('0' + i / 100);
+        if (i >= 10)
+            *out_p++ = (char)('0' + i / 10 % 10);
+        *out_p++ = (char)('0' + i % 10);
+        *out_p++ = '/';
+        if (cand_n >= 100)
+            *out_p++ = (char)('0' + cand_n / 100);
+        if (cand_n >= 10)
+            *out_p++ = (char)('0' + cand_n / 10 % 10);
+        *out_p++ = (char)('0' + cand_n % 10);
+        for (i = cand_i; i < cand_n; i++) {
+            cand_text(i, c);
+            n = (uint8_t)strlen(c);
+            if (out_p - out + n + 2 > max)
+                break;
+            *out_p++ = ' ';
+            memcpy(out_p, c, n);
+            out_p += n;
+        }
+        *out_p = 0;
+    }
+    out_p = save;
 }

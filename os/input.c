@@ -114,6 +114,22 @@ int16_t in_text(uint8_t k, char *out)
     return 1;
 }
 
+uint8_t in_conv_key(uint8_t k, char *out)
+{
+    out[0] = 0;
+    if (!ime_converting)
+        return 0;
+    switch (k) {
+    case K_UP: ime_conv_next(-1); return 1;
+    case K_DOWN: ime_conv_next(1); return 1;
+    case K_LEFT: ime_conv_resize(-1); return 1;
+    case K_RIGHT: ime_conv_resize(1); return 1;
+    case K_ENTER: ime_conv_commit(out); return 1;
+    case K_DEL: case K_CLEAR: ime_conv_cancel(); return 1;
+    }
+    return 0;
+}
+
 /* ---- the language list ---- */
 
 static uint8_t pick_items[IME_N], pick_n, pick_sel, pick_top;
@@ -211,21 +227,27 @@ void in_pick_draw(void)
 
 /* ---- the settings screen ---- */
 
-static uint8_t setup_sel;
+static uint8_t setup_sel, setup_top;
 
 void in_setup_draw(void)
 {
-    uint8_t l;
+    uint8_t r, l;
+    if (setup_sel < setup_top)
+        setup_top = setup_sel;
+    else if (setup_sel >= setup_top + PICK_ROWS)
+        setup_top = setup_sel - PICK_ROWS + 1;
     ui_clear();
     ui_status("input languages 2nd+ALPHA");
-    for (l = 1; l < IME_N; l++)
-        list_line(8 + (l - 1) * 8, l, (ime_enabled >> l) & 1 ? "[x] " : "[ ] ", ime_title(l),
+    for (r = 0; r < PICK_ROWS && setup_top + r + 1 < IME_N; r++) {
+        l = setup_top + r + 1;
+        list_line(8 + r * 8, l, (ime_enabled >> l) & 1 ? "[x] " : "[ ] ", ime_title(l),
                   l - 1 == setup_sel);
+    }
 }
 
 uint8_t in_setup_key(uint8_t k)
 {
-    static const uint8_t digit_bk[] = { K_1, K_2, K_3, K_4, K_5, K_6, K_7 };
+    static const uint8_t digit_bk[] = { K_1, K_2, K_3, K_4, K_5, K_6, K_7, K_8, K_9 };
     uint8_t i;
     if (k == K_CLEAR || k == K_MODE)
         return 0;
@@ -286,6 +308,10 @@ int8_t le_key(struct line_edit *le, uint8_t k)
     uint8_t n;
     if (in_picking) {
         in_pick_key(k);
+        return 0;
+    }
+    if (in_conv_key(k, out)) {
+        insert(le, out);
         return 0;
     }
     if (ime_pre[0]) {
@@ -409,7 +435,7 @@ void le_draw(struct line_edit *le, uint8_t row, const char *prompt)
 {
     char b[64];
     uint8_t y = row * 6 + 8, h = 6, i, n, w, bn, x, cur_x = 0, pre_x = 0, pre_w = 0;
-    uint8_t avail, start, px_cur = 0, px_start = 0, pre_px = 0;
+    uint8_t avail, start, px_cur = 0, px_start = 0, pre_px = 0, conv_x = 0;
     const char *p;
     if (in_picking) {
         in_pick_draw();
@@ -442,12 +468,16 @@ void le_draw(struct line_edit *le, uint8_t row, const char *prompt)
         if (i == le->cur) {
             pre_x = x;
             for (p = ime_pre; *p && bn + 2 < sizeof(b); p += n) {
+                if (p - ime_pre == ime_conv_n)
+                    conv_x = x;
                 w = char_px(p, &n);
                 if (x + w > 96)
                     break;
                 bn += char_cells(p, b + bn, 0);
                 x += w;
             }
+            if (p - ime_pre <= ime_conv_n)
+                conv_x = x;
             pre_w = x - pre_x;
             cur_x = x;
         }
@@ -463,6 +493,17 @@ void le_draw(struct line_edit *le, uint8_t row, const char *prompt)
     ui_text_at(y, b, h);
     if (pre_w)
         lcd_invert_rect(pre_x, y + h - 1, pre_w, 1);
+    if (ime_converting) {
+        /* the candidate inverted, the list on the row above */
+        char u[64];
+        if (conv_x > pre_x)
+            lcd_invert_rect(pre_x, y, conv_x - pre_x, h);
+        if (y >= 16) {
+            ime_cand_list(u, sizeof(u) - 1);
+            ui_from_utf8(u, b, sizeof(b));
+            ui_text_at(y - 8, b, 8);
+        }
+    }
     if (cur_x < 96)
         lcd_invert_rect(cur_x, y, le->cur < le->len && !le->secret &&
                         char_px(le->buf + le->cur, &n) == 8 && cur_x <= 88 ? 8 : 4, h);

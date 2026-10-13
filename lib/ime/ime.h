@@ -14,6 +14,7 @@ enum {
     IME_JA,             /* Japanese: hiragana, converted to kanji */
     IME_KATA,           /* katakana */
     IME_KO,             /* Hangul, dubeolsik */
+    IME_ZH,             /* Chinese: pinyin, converted to characters */
     IME_RU,             /* Cyrillic, transliterated */
     IME_EL,             /* Greek, transliterated */
     IME_AR,             /* Arabic, transliterated */
@@ -40,5 +41,17 @@ void ime_reset(void);                   /* drop the composition */
 void ime_feed(char c, char *out);
 void ime_flush(char *out);              /* commit the composition */
 uint8_t ime_back(void);                 /* DEL in the composition; 0 if empty */
+
+/* conversion (Japanese, Chinese; lib/ime/dict.h): a space in the
+ * composition converts its first part (the longest reading the dictionary
+ * knows) and shows the first candidate; ime_pre then starts with the
+ * candidate (ime_conv_n bytes) */
+extern uint8_t ime_converting, ime_conv_n;
+void ime_conv_next(int8_t d);           /* next (1) or previous (-1) candidate */
+void ime_conv_resize(int8_t d);         /* one character more or less */
+void ime_conv_commit(char *out);        /* the candidate to out */
+void ime_conv_cancel(void);             /* back to the composition */
+/* "i/n cand cand ..." from the current candidate on, UTF-8, max bytes */
+void ime_cand_list(char *out, uint8_t max);
 
 #endif

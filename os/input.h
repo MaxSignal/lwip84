@@ -21,6 +21,10 @@ const char *in_mode_str(void);
  * result is IN_MODE_CHANGED or IN_PICK, which commit the composition */
 int16_t in_text(uint8_t k, char *out);
 
+/* conversion keys (UP/DOWN candidate, LEFT/RIGHT part, ENTER, DEL/CLEAR):
+ * 1 if the key was one; committed text in out (IME_OUT_MAX) */
+uint8_t in_conv_key(uint8_t k, char *out);
+
 /* the input language list (2nd+ALPHA): drawn over the screen */
 extern uint8_t in_picking;
 void in_pick_open(void);

@@ -106,8 +106,10 @@ jobs:
 
       - name: Input method tests
         run: |
-          gcc -O2 -Wall -I lib/ime -o "$TMPDIR/ime_test" lib/ime/tests/ime_test.c lib/ime/ime.c
+          gcc -O2 -Wall -DDICT_HOST -I lib/ime -o "$TMPDIR/ime_test" lib/ime/tests/ime_test.c lib/ime/ime.c lib/ime/dict.c
           "$TMPDIR/ime_test"
+          python3 tools/mkdict84.py build dict "$TMPDIR/dict.bin"
+          "$TMPDIR/ime_test" "$TMPDIR/dict.bin"
 
       - name: Collect files
         run: |

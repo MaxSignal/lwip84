@@ -57,7 +57,7 @@ COMMON_S = os/crt0.s os/farcall.s os/usb_ll.s
 # the OS (os/), the library (lib/) and the applications (app/)
 BANKED_C = os/main.c os/input.c os/ui.c os/lcd.c os/fmt.c os/usb_ctl.c os/ncm.c os/heap.c \
            lib/net/sys_arch.c lib/net/time84.c lib/net/netif_ncm.c lib/net/net84.c \
-           lib/net/sock84.c lib/net/tls84.c lib/net/kx84.c lib/font/font.c lib/ime/ime.c \
+           lib/net/sock84.c lib/net/tls84.c lib/net/kx84.c lib/font/font.c lib/ime/ime.c lib/ime/dict.c \
            lib/crypto/sha256.c lib/crypto/chacha.c lib/crypto/aes.c lib/crypto/x25519.c \
            lib/crypto/rng.c \
            app/browser/browser.c app/browser/html.c app/ssh/ssh.c app/ssh/term.c \
@@ -139,15 +139,22 @@ $(FONT_BIN): $(FONT) $(wildcard fonts/*/*) tools/mkfont84.py
 	$(PY) tools/mkfont84.py $< $@
 endif
 
+# the conversion dictionaries of the input methods (lib/ime/dict.h), from
+# dict/*.tsv (tools/mkdict84.py extract makes them from Mozc and Unihan)
+DICT_BIN = $(B)/dict.bin
+$(DICT_BIN): dict/ja.tsv dict/zh.tsv tools/mkdict84.py
+	@mkdir -p $(B)
+	$(PY) tools/mkdict84.py build dict $@
+
 # the browser's Shift_JIS table (app/browser/html.h: HTML_JIS_PAGE)
 JIS_BIN = $(B)/jis.bin
 $(JIS_BIN): tools/mkjis84.py
 	@mkdir -p $(B)
 	$(PY) tools/mkjis84.py $@
 
-$(B)/lwip84.rom: $(B)/lwip84.ihx tools/mkrom.py $(FONT_BIN) $(JIS_BIN)
+$(B)/lwip84.rom: $(B)/lwip84.ihx tools/mkrom.py $(FONT_BIN) $(JIS_BIN) $(DICT_BIN)
 	$(PY) tools/mkrom.py --pages $(PAGES) --pagelist $(B)/pages.txt $(FONT_ARG) \
-	    --data 2A:$(JIS_BIN) $< $@
+	    --data 2A:$(JIS_BIN) --data 08:$(DICT_BIN) $< $@
 	@grep -E "^_(CODE|CONST|HOME|GSINIT|GSFINAL|INITIALIZER|DATA|BSS|INITIALIZED) " $(B)/lwip84.map | sort -u
 
 # OS upgrade for the calculator, signed with TI's public OS key 0A

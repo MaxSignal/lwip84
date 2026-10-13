@@ -34,3 +34,6 @@ fonts/quanpixel/ is QuanPixel (SIL Open Font License 1.1, fonts/quanpixel/OFL.tx
 fonts/unscii/ is from unscii/funscii (CC0 1.0, fonts/unscii/LICENSE.txt).
 fonts/unifont/ is from GNU Unifont (SIL Open Font License 1.1, or GPL 2+ with
 the font embedding exception, fonts/unifont/LICENSE.txt).
+dict/ja.tsv is from Mozc's open source dictionary (IPAdic and the Okinawa
+dictionary; their licenses are in dict/LICENSE-ja.txt). dict/zh.tsv is from
+Unihan (Unicode License v3, dict/LICENSE-zh.txt).

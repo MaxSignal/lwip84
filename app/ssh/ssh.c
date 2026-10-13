@@ -697,7 +697,13 @@ static void draw(void)
             uint8_t n = (uint8_t)strlen(in_mode_str());
             memcpy(b, in_mode_str(), n);
             b[n++] = ' ';
-            ui_from_utf8(ime_pre, b + n, (uint8_t)(sizeof(b) - n));
+            if (ime_converting) {       /* the candidates */
+                char u[64];
+                ime_cand_list(u, sizeof(u) - 1);
+                ui_from_utf8(u, b + n, (uint8_t)(sizeof(b) - n));
+            } else {
+                ui_from_utf8(ime_pre, b + n, (uint8_t)(sizeof(b) - n));
+            }
         } else if (st == S_OPEN && !msg[0])
             snprintf(b, sizeof(b), "%s%s %s", in_mode_str(), ctrl_next ? "^" : " ", f_host);
         else if (st == S_COMPUTE && kex)
@@ -821,6 +827,11 @@ uint8_t ssh_key(uint8_t k)
             st = S_IDLE;
             start_field(F_HOST);
         }
+        draw();
+        return 1;
+    }
+    if (in_conv_key(k, out)) {
+        send_text(out);
         draw();
         return 1;
     }
