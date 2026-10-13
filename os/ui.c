@@ -19,21 +19,56 @@ static void draw_glyph(uint8_t x, uint8_t y, const uint8_t *rows, uint8_t n)
 {
     uint8_t r, sh = x & 7;
     uint8_t *p = lcd_buf + (uint16_t)y * 12 + (x >> 3);
-    for (r = 0; r < n && y + r < 64; r++, p += 12) {
+    if (y + n > 64)
+        n = 64 - y;
+    if (!sh) {                          /* text columns: x is 4k */
+        for (r = 0; r < n; r++, p += 12)
+            *p |= rows[r];
+        return;
+    }
+    if (sh == 4 && x < 88) {
+        for (r = 0; r < n; r++, p += 12) {
+            p[0] |= rows[r] >> 4;
+            p[1] |= rows[r] << 4;
+        }
+        return;
+    }
+    for (r = 0; r < n; r++, p += 12) {
         p[0] |= rows[r] >> sh;
         if (sh && (x >> 3) < 11)
             p[1] |= rows[r] << (8 - sh);
     }
 }
 
+/* recently drawn glyphs, by their lead and trail bytes: reading one from
+ * flash takes far calls */
+#define GCACHE 64
+static struct {
+    uint8_t lead, trail, w, rows[8];
+} gcache[GCACHE];
+
+static const uint8_t *glyph_rows(uint8_t lead, uint8_t trail, uint8_t *w)
+{
+    uint8_t i = (uint8_t)(trail ^ (lead << 3)) & (GCACHE - 1);
+    if (gcache[i].lead != lead || gcache[i].trail != trail) {
+        /* lead 0 never occurs: an empty slot never matches */
+        gcache[i].w = font_glyph(FONT_GLYPH(lead, trail), gcache[i].rows);
+        gcache[i].lead = lead;
+        gcache[i].trail = trail;
+    }
+    *w = gcache[i].w;
+    return gcache[i].rows;
+}
+
 /* cells of s from x on; ASCII at y_ascii, glyphs at y_glyph with n rows */
 static void draw_cells(const char *s, uint8_t x, uint8_t y_ascii, uint8_t y_glyph,
                        uint8_t n, uint8_t inv_y, uint8_t inv_h)
 {
-    uint8_t rows[8], last = 0xFF;
+    const uint8_t *rows;
+    uint8_t last = 0xFF, w;
     while (*s && x < 96) {
         if (FONT_IS_LEAD(*s) && s[1]) {
-            uint8_t w = font_glyph(FONT_GLYPH(s[0], s[1]), rows);
+            rows = glyph_rows((uint8_t)s[0], (uint8_t)s[1], &w);
             s += 2;
             if (!w) {
                 /* a mark: over the glyph before it */
@@ -49,7 +84,8 @@ static void draw_cells(const char *s, uint8_t x, uint8_t y_ascii, uint8_t y_glyp
             continue;
         }
         last = 0xFF;
-        lcd_draw_char(x, y_ascii, *s & 0x7F);
+        if (*s != ' ')                  /* the row is clear already */
+            lcd_draw_char(x, y_ascii, *s & 0x7F);
         if ((*s & 0x80) && inv_h)
             lcd_invert_rect(x, inv_y, 4, inv_h);
         s++;
