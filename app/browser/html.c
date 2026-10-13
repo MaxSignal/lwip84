@@ -36,7 +36,7 @@ enum {
     T_LINK, T_MAIN, T_MATH, T_MENU, T_META, T_NAV, T_NOFRAMES, T_OL, T_OPTGROUP, T_OPTION,
     T_P, T_PARAM, T_PRE, T_SCRIPT, T_SECTION, T_SELECT, T_SOURCE, T_STYLE, T_SUMMARY, T_SVG,
     T_TABLE, T_TBODY, T_TD, T_TEMPLATE, T_TEXTAREA, T_TFOOT, T_TH, T_THEAD, T_TITLE, T_TR,
-    T_TRACK, T_UL, T_WBR, T_XMP, T_COUNT
+    T_TRACK, T_UL, T_WBR, T_XMP, T_FRAME, T_FRAMESET, T_COUNT
 };
 
 #define TF_VOID 0x01
@@ -56,7 +56,7 @@ static const char tag_names_bk[T_COUNT - 1][11] = {
     "link", "main", "math", "menu", "meta", "nav", "noframes", "ol", "optgroup", "option",
     "p", "param", "pre", "script", "section", "select", "source", "style", "summary", "svg",
     "table", "tbody", "td", "template", "textarea", "tfoot", "th", "thead", "title", "tr",
-    "track", "ul", "wbr", "xmp"};
+    "track", "ul", "wbr", "xmp", "frame", "frameset"};
 
 #define B TF_BLOCK
 #define BP (TF_BLOCK | TF_PARA)
@@ -67,10 +67,10 @@ static const uint8_t tag_flags_bk[T_COUNT] = {
     B, B, V, B, B, TF_HIDE, B, BP, B, V,
     B, B, BP, B, B | TF_ATTR, BP | TF_HEAD, BP | TF_HEAD, BP | TF_HEAD, BP | TF_HEAD, BP | TF_HEAD,
     BP | TF_HEAD, 0, B, V | B, 0, TF_HIDE, V | TF_ATTR, V | TF_ATTR, B, B,
-    V, B, TF_HIDE, B, V, B, TF_RAW, B, TF_ATTR, TF_ATTR,
+    V, B, TF_HIDE, B, V | TF_ATTR, B, TF_RAW, B, TF_ATTR, TF_ATTR,
     BP, V, BP, TF_RAW, B, TF_ATTR, V, TF_RAW, B, TF_HIDE,
     BP, 0, 0, TF_HIDE, TF_RC | TF_ATTR, 0, 0, 0, TF_RC, B,
-    V, B, V, TF_RAW};
+    V, B, V, TF_RAW, V | B | TF_ATTR, B};
 #undef B
 #undef BP
 #undef V
@@ -78,7 +78,8 @@ static const uint8_t tag_flags_bk[T_COUNT] = {
 /* attributes */
 enum {
     A_HREF = 1, A_NAME, A_VALUE, A_TYPE, A_ACTION, A_METHOD, A_ALT, A_CHECKED, A_SELECTED,
-    A_HIDDEN, A_STYLE, A_CLASS, A_ROLE, A_ARIAH, A_DISABLED, A_SIZE, A_N
+    A_HIDDEN, A_STYLE, A_CLASS, A_ROLE, A_ARIAH, A_DISABLED, A_SIZE, A_SRC, A_CONTENT,
+    A_CHARSET, A_N
 };
 
 /* classes whose elements are not shown */
@@ -203,6 +204,8 @@ static uint8_t col, lmargin, word_n, pending_space, blank, indent, in_pre, upper
 static uint8_t ar_n, word_glyph_end, deva_cluster;
 static uint16_t deva_last;
 static uint8_t sink, hide, sd, sover, link_pending, cell_sep, row_cells, last_th;
+static uint8_t cs_lead;         /* Shift_JIS, EUC-JP: first byte of a character */
+static uint16_t cs_fed;         /* bytes seen, up to 1024: <meta> is there */
 static uint8_t ld, bq, ddn, ol_mask, in_button, title_cap, cap_n, title_sp, cap_sp;
 static uint8_t olnum[8];
 static char bullet[5];
@@ -278,6 +281,9 @@ void html_begin(uint8_t is_html)
     u_need = unk_run = 0;
     ar_n = word_glyph_end = 0;
     deva_cluster = 0xFF;
+    html_charset = HC_UTF8;
+    cs_lead = 0;
+    cs_fed = 0;
     bullet[0] = 0;
     cur_form = HTML_NOFORM;
     in_select = opt_open = 0;
@@ -1599,6 +1605,30 @@ static void void_tag(uint8_t id)
     case T_INPUT:
         input_tag();
         break;
+    case T_META:
+        /* <meta charset=...> or http-equiv Content-Type */
+        a = attr(A_CHARSET);
+        if (!a)
+            a = attr(A_CONTENT);
+        if (a && html_charset_of(a) != HC_NONE)
+            html_charset = html_charset_of(a);
+        break;
+    case T_FRAME:
+        /* a frame: a link to its page */
+        a = attr(A_SRC);
+        if (a && *a && !tag_hide) {
+            const char *nm = attr(A_NAME);
+            out_break(0);
+            set_link(a);
+            emit_ascii('[');
+            text_str(nm && *nm ? nm : "frame");
+            text_str(": ");
+            text_str(a);
+            emit_ascii(']');
+            link_pending = 0;
+            out_break(0);
+        }
+        break;
     }
 }
 
@@ -1750,6 +1780,7 @@ static uint8_t attr_lookup(void)
     const char *n = hs->aname;
     switch (aname_n) {
     case 3:
+        if (!memcmp(n, "src", 3)) return A_SRC;
         return !memcmp(n, "alt", 3) ? A_ALT : 0;
     case 4:
         if (!memcmp(n, "href", 4)) return A_HREF;
@@ -1769,6 +1800,8 @@ static uint8_t attr_lookup(void)
         if (!memcmp(n, "hidden", 6)) return A_HIDDEN;
         return 0;
     case 7:
+        if (!memcmp(n, "content", 7)) return A_CONTENT;
+        if (!memcmp(n, "charset", 7)) return A_CHARSET;
         return !memcmp(n, "checked", 7) ? A_CHECKED : 0;
     case 8:
         if (!memcmp(n, "selected", 8)) return A_SELECTED;
@@ -1954,7 +1987,134 @@ static void entity_end(uint8_t semi)
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* Shift_JIS and EUC-JP: turned into UTF-8 before the parser (their
+ * second bytes are never < > " or &)                                   */
+
+uint8_t html_charset;
+
+uint8_t html_charset_of(const char *s)
+{
+    char b[12];
+    uint8_t i;
+    for (; *s; s++) {
+        for (i = 0; i < sizeof(b) - 1 && s[i]; i++)
+            b[i] = lower(s[i]);
+        b[i] = 0;
+        if (!memcmp(b, "utf-8", 5))
+            return HC_UTF8;
+        if (!memcmp(b, "shift_jis", 9) || !memcmp(b, "sjis", 4) || !memcmp(b, "x-sjis", 6) ||
+            !memcmp(b, "windows-31j", 11) || !memcmp(b, "cp932", 5))
+            return HC_SJIS;
+        if (!memcmp(b, "euc-jp", 6) || !memcmp(b, "x-euc-jp", 8))
+            return HC_EUC;
+    }
+    return HC_NONE;
+}
+
+static uint8_t *put_utf8(uint8_t *o, uint16_t cp)
+{
+    if (cp < 0x80) {
+        *o++ = (uint8_t)cp;
+    } else if (cp < 0x800) {
+        *o++ = (uint8_t)(0xC0 | (cp >> 6));
+        *o++ = (uint8_t)(0x80 | (cp & 0x3F));
+    } else {
+        *o++ = (uint8_t)(0xE0 | (cp >> 12));
+        *o++ = (uint8_t)(0x80 | ((cp >> 6) & 0x3F));
+        *o++ = (uint8_t)(0x80 | (cp & 0x3F));
+    }
+    return o;
+}
+
+/* code point of the Shift_JIS bytes lead, trail (tools/mkjis84.py) */
+static uint16_t sjis_cp(uint8_t lead, uint8_t trail)
+{
+    uint16_t idx, cp = 0;
+    if (trail < 0x40 || trail == 0x7F || trail > 0xFC)
+        return '?';
+    idx = (uint16_t)(lead < 0xA0 ? lead - 0x81 : lead - 0xE0 + 31) * 188 +
+          (trail < 0x7F ? trail - 0x40 : trail - 0x41);
+    idx <<= 1;
+    far_read(HTML_JIS_PAGE + (uint8_t)(idx >> 14), 0x4000 + (idx & 0x3FFF), &cp, 2);
+    return cp && cp != 0xFFFF ? cp : '?';
+}
+
+static uint8_t *decode_byte(uint8_t *o, uint8_t c)
+{
+    uint8_t l = cs_lead;
+    if (l) {
+        cs_lead = 0;
+        if (html_charset == HC_SJIS)
+            return put_utf8(o, sjis_cp(l, c));
+        if (l == 0x8E)                  /* EUC-JP half-width katakana */
+            return put_utf8(o, c >= 0xA1 && c <= 0xDF ? 0xFF61 + (c - 0xA1) : '?');
+        if (l == 0x8F) {                /* JIS X 0212: three bytes, not known */
+            cs_lead = 1;
+            return o;
+        }
+        if (l == 1)
+            return put_utf8(o, '?');
+        if (c < 0xA1 || c > 0xFE)
+            return put_utf8(o, '?');
+        /* EUC row/cell to Shift_JIS */
+        {
+            uint8_t r = l - 0xA0, k = c - 0xA0;
+            uint8_t sl = (uint8_t)((r + 1) / 2 + (r <= 62 ? 0x70 : 0xB0));
+            uint8_t st2 = r & 1 ? (uint8_t)(k + (k <= 63 ? 0x3F : 0x40)) : (uint8_t)(k + 0x9E);
+            return put_utf8(o, sjis_cp(sl, st2));
+        }
+    }
+    if (c < 0x80) {
+        *o++ = c;
+        return o;
+    }
+    if (html_charset == HC_SJIS) {
+        if (c >= 0xA1 && c <= 0xDF)
+            return put_utf8(o, 0xFF61 + (c - 0xA1));
+        if ((c >= 0x81 && c <= 0x9F) || (c >= 0xE0 && c <= 0xFC))
+            cs_lead = c;
+        else
+            o = put_utf8(o, '?');
+        return o;
+    }
+    if (c == 0x8E || c == 0x8F || c >= 0xA1)
+        cs_lead = c;
+    else
+        o = put_utf8(o, '?');
+    return o;
+}
+
+static void feed_utf8(const uint8_t *p, uint16_t n);
+
 void html_feed(const uint8_t *p, uint16_t n)
+{
+    uint8_t buf[96], *o;
+    while (n && html_charset == HC_UTF8) {
+        /* in the first 1 KiB a <meta> may name another charset: stop at
+           the end of each tag */
+        const uint8_t *gt = cs_fed < 1024 ? memchr(p, '>', n) : NULL;
+        uint16_t k = gt ? (uint16_t)(gt - p + 1) : n;
+        feed_utf8(p, k);
+        p += k;
+        n -= k;
+        if (cs_fed < 1024)
+            cs_fed += k;
+    }
+    while (n) {
+        o = buf;
+        while (n && o < buf + sizeof(buf) - 3) {
+            o = decode_byte(o, *p++);
+            n--;
+            /* the charset may change at the end of a <meta> */
+            if (p[-1] == '>')
+                break;
+        }
+        feed_utf8(buf, (uint16_t)(o - buf));
+    }
+}
+
+static void feed_utf8(const uint8_t *p, uint16_t n)
 {
     const uint8_t *end = p + n;
     uint8_t c;

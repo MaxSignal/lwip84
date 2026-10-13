@@ -2,14 +2,15 @@
  *
  *   gcc -O2 -DHTML_HOST -I app/browser -I lib/font -o html_test app/browser/tests/html_test.c \
  *       app/browser/html.c lib/font/font.c
- *   html_test [-c CHUNK] [-i] [-a] [-f FONT.bin] FILE.html
+ *   html_test [-c CHUNK] [-i] [-a] [-f FONT.bin] [-j JIS.bin] FILE.html
  *
  * Prints the title and the page as it appears on the calculator (item
  * numbers inverted on a terminal), -i adds the list of links and fields,
  * -c feeds the page in pieces of CHUNK bytes (0: random sizes) to check
  * that the result does not depend on how the page arrives.  -a prints the
  * page without terminal escapes.  -f uses a font made by tools/mkfont84.py
- * (font glyphs are printed as UTF-8).
+ * (font glyphs are printed as UTF-8), -j the Shift_JIS table of
+ * tools/mkjis84.py.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,12 +22,20 @@
 static uint8_t xram[0x10000];
 static uint8_t *font_blob;
 static long font_len;
+static uint8_t *jis_blob;
+static long jis_len;
 static uint16_t glyph_cp[16575];
 
 void far_read(uint8_t page, uint16_t addr, void *dst, uint16_t len)
 {
     long off = (long)(page - FONT_PAGE) * 0x4000 + (addr - 0x4000);
     memset(dst, 0xFF, len);
+    if (page >= HTML_JIS_PAGE) {
+        off = (long)(page - HTML_JIS_PAGE) * 0x4000 + (addr - 0x4000);
+        if (jis_blob && off + len <= jis_len)
+            memcpy(dst, jis_blob + off, len);
+        return;
+    }
     if (font_blob && off >= 0 && off + len <= font_len)
         memcpy(dst, font_blob + off, len);
 }
@@ -109,7 +118,14 @@ int main(int argc, char **argv)
             items = 1;
         else if (!strcmp(argv[i], "-a"))
             ascii = 1;
-        else if (!strcmp(argv[i], "-f") && i + 1 < argc)
+        else if (!strcmp(argv[i], "-j") && i + 1 < argc) {
+            FILE *f = fopen(argv[++i], "rb");
+            if (!f)
+                return 1;
+            jis_blob = malloc(65536);
+            jis_len = (long)fread(jis_blob, 1, 65536, f);
+            fclose(f);
+        } else if (!strcmp(argv[i], "-f") && i + 1 < argc)
             font_load(argv[++i]);
         else
             file = argv[i];

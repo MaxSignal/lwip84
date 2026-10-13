@@ -57,6 +57,13 @@ extern char html_title[HTML_COLS + 1];
 
 void html_begin(uint8_t is_html);
 void html_feed(const uint8_t *p, uint16_t n);
+
+/* character set of the page: from the HTTP header (set it after
+ * html_begin) or <meta>; Shift_JIS and EUC-JP use a table on flash */
+enum { HC_NONE, HC_UTF8, HC_SJIS, HC_EUC };
+#define HTML_JIS_PAGE 0x2A
+extern uint8_t html_charset;
+uint8_t html_charset_of(const char *s);         /* HC_NONE if none is named */
 void html_end(void);
 
 void html_get_line(uint16_t n, char *buf);          /* HTML_COLS bytes */

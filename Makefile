@@ -139,8 +139,15 @@ $(FONT_BIN): $(FONT) $(wildcard fonts/*/*) tools/mkfont84.py
 	$(PY) tools/mkfont84.py $< $@
 endif
 
-$(B)/lwip84.rom: $(B)/lwip84.ihx tools/mkrom.py $(FONT_BIN)
-	$(PY) tools/mkrom.py --pages $(PAGES) --pagelist $(B)/pages.txt $(FONT_ARG) $< $@
+# the browser's Shift_JIS table (app/browser/html.h: HTML_JIS_PAGE)
+JIS_BIN = $(B)/jis.bin
+$(JIS_BIN): tools/mkjis84.py
+	@mkdir -p $(B)
+	$(PY) tools/mkjis84.py $@
+
+$(B)/lwip84.rom: $(B)/lwip84.ihx tools/mkrom.py $(FONT_BIN) $(JIS_BIN)
+	$(PY) tools/mkrom.py --pages $(PAGES) --pagelist $(B)/pages.txt $(FONT_ARG) \
+	    --data 2A:$(JIS_BIN) $< $@
 	@grep -E "^_(CODE|CONST|HOME|GSINIT|GSFINAL|INITIALIZER|DATA|BSS|INITIALIZED) " $(B)/lwip84.map | sort -u
 
 # OS upgrade for the calculator, signed with TI's public OS key 0A

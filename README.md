@@ -191,7 +191,7 @@ does not run code on pages 08h-29h (08h-69h on the SE), so code is on pages
 of the TI-84 Plus writes a page sent as 10h-1Fh to 30h-3Fh and did not take
 2Ch-32h (`tools/pagetest.sh` sends marked pages, the debug build's Y= shows
 where they landed), so data is on pages 08h-0Fh and 20h-2Bh: the external
-font on 20h-29h, the rest is free. `tools/mkrom.py` refuses the other pages.
+font on 20h-29h, the browser's Shift_JIS table on 2Ah-2Bh, the rest is free. `tools/mkrom.py` refuses the other pages.
 
 The six other RAM pages (96 KiB) are reached through `xram_read` /
 `xram_write` and hold the web page (64 KiB), the SSH scrollback (24 KiB),

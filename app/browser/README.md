@@ -56,7 +56,10 @@ The page is laid out as it arrives, 24 columns wide:
   lists, submit buttons (`input` and `button`) and hidden fields, sent with
   GET or POST (`application/x-www-form-urlencoded`). Controls outside a form
   and buttons that are not submit buttons need JavaScript and are left out;
-- entities and UTF-8 are decoded. Latin letters lose their accents;
+- frames: a page made of frames lists them as links;
+- entities and UTF-8 are decoded, and Shift_JIS and EUC-JP (named in the
+  HTTP header or a `<meta>` in the first KiB) with a table on flash pages
+  2Ah-2Bh (`tools/mkjis84.py`, Windows' code page 932). Latin letters lose their accents;
   Japanese, Chinese, Hangul, Arabic, Devanagari, Greek and Cyrillic are drawn
   with the [external font](../../README.md#external-font), the rest is `?`.
 
@@ -101,8 +104,10 @@ gcc -O2 -DHTML_HOST -I app/browser -I lib/font -o ../tmp/html_test \
     app/browser/tests/html_test.c app/browser/html.c lib/font/font.c
 ../tmp/html_test -i page.html                     # page, links and fields
 ../tmp/html_test -f build-84p/font.bin page.html  # with the external font
-sh app/browser/tests/html_check.sh ../tmp/html_test
+sh app/browser/tests/html_check.sh ../tmp/html_test build-84p/font.bin build-84p/jis.bin
 ```
 
 `html_check.sh` renders `tests/pages/*.html` whole, byte by byte and in
-random pieces and compares them with the `.txt` files.
+random pieces and compares them with the `.txt` files (the `*.jis.html`
+pages only with the font and the Shift_JIS table). `-j JIS.bin` gives
+`html_test` the table.

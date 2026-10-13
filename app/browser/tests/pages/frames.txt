@@ -1,0 +1,6 @@
+title: Frames
+main: -1
+1[left: menu.htm]       |
+2[frame: top.htm]       |
+   1 link     menu.htm
+   2 link     top.htm

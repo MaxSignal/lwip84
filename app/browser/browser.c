@@ -45,7 +45,7 @@ static uint16_t top, pick_cur, pick_top, cur_idx;
 static uint32_t rx_bytes, last_draw, t_start;
 
 /* HTTP */
-static uint8_t hstate, chunked, is_html, http_status, do_redirect;
+static uint8_t hstate, chunked, is_html, http_status, do_redirect, hdr_charset;
 static uint32_t chunk_left;
 static uint8_t hline_n;
 
@@ -278,6 +278,7 @@ static void load(const char *u, const char *body, const char *ref)
     hline_n = 0;
     chunked = 0;
     is_html = 1;
+    hdr_charset = HC_NONE;
     http_status = 0;
     location[0] = 0;
     rx_bytes = 0;
@@ -353,6 +354,8 @@ static void header_line(void)
         hstate = chunked ? H_CHUNK_SIZE : H_BODY;
         chunk_left = 0;
         html_begin(is_html);
+        if (hdr_charset != HC_NONE)
+            html_charset = hdr_charset;
         page_open = 1;
         top = 0;
         scrolled = 0;
@@ -369,8 +372,10 @@ static void header_line(void)
         strncpy(location, v, URL_MAX);
     else if (!strcmp(hline, "transfer-encoding") && strstr(v, "chunked"))
         chunked = 1;
-    else if (!strcmp(hline, "content-type"))
+    else if (!strcmp(hline, "content-type")) {
         is_html = strstr(v, "html") != NULL || strstr(v, "xml") != NULL;
+        hdr_charset = html_charset_of(v);
+    }
 }
 
 static void http_feed(const uint8_t *p, uint16_t n)
