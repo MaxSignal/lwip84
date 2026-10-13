@@ -230,6 +230,67 @@ def arabic_complete(g):
     return g
 
 
+# Greek and Cyrillic letters that k6x8 lacks: a letter with an accent is its
+# base letter with the accent drawn above (when the two rows above the letter
+# are free), a few look like Latin letters or like a mirrored letter.
+ACCENTS = {0x0300: [(0, -1), (1, 0)], 0x0301: [(0, 1), (1, 0)], 0x0306: [(0, -1), (0, 1), (1, 0)],
+           0x0308: [(1, -1), (1, 1)]}
+LOOKALIKE = {0x0405: 'S', 0x0406: 'I', 0x0408: 'J', 0x0455: 's', 0x0456: 'i', 0x0458: 'j',
+             0x03F3: 'j', 0x04C0: 'I', 0x04CF: 'l'}
+MIRROR = {0x0404: 0x042D, 0x0454: 0x044D}          # Ukrainian ie: mirrored e
+UPTURN = {0x0490: 0x0413, 0x0491: 0x0433}          # ghe with upturn
+FINAL_SIGMA = [0x00, 0x00, 0x38, 0x40, 0x78, 0x08, 0x10, 0x00]
+
+
+def greek_cyrillic_complete(chosen):
+    def ink(rows):
+        xs = [x for r in rows for x in range(8) if r & (0x80 >> x)]
+        return (min(xs) + max(xs)) // 2 if xs else 3
+
+    def base_of(cp):
+        if cp in LOOKALIKE:
+            return chosen.get(ord(LOOKALIKE[cp]))
+        return chosen.get(cp)
+
+    n = 0
+    for cp in range(0x0370, 0x0500):
+        if cp in chosen or not unicodedata.category(chr(cp)).startswith('L'):
+            continue
+        g = None
+        if cp in LOOKALIKE:
+            g = base_of(cp)
+        elif cp in MIRROR and MIRROR[cp] in chosen:
+            rows, kind = chosen[MIRROR[cp]]
+            w = max((x for r in rows for x in range(8) if r & (0x80 >> x)), default=5) + 1
+            g = ([int('{:08b}'.format(r)[:w][::-1].ljust(8, '0'), 2) for r in rows], kind)
+        elif cp in UPTURN and UPTURN[cp] in chosen:
+            rows, kind = chosen[UPTURN[cp]]
+            top = next(y for y, r in enumerate(rows) if r)
+            right = max(x for x in range(8) if rows[top] & (0x80 >> x))
+            rows = list(rows)
+            if top:
+                rows[top - 1] |= 0x80 >> right
+            g = (rows, kind)
+        elif cp == 0x03C2:
+            g = (FINAL_SIGMA, chosen[0x03C3][1]) if 0x03C3 in chosen else None
+        else:
+            d = unicodedata.normalize('NFD', chr(cp))
+            b = base_of(ord(d[0]))
+            if b and len(d) > 1 and all(ord(c) in ACCENTS for c in d[1:]):
+                rows, kind = list(b[0]), b[1]
+                if not rows[0] and not rows[1]:
+                    cx = ink(rows)
+                    for c in d[1:]:
+                        for y, dx in ACCENTS[ord(c)]:
+                            if 0 <= cx + dx < 8:
+                                rows[y] |= 0x80 >> (cx + dx)
+                g = (rows, kind)
+        if g:
+            chosen[cp] = g
+            n += 1
+    return n
+
+
 def read_unifont(path):
     """16 pixels high: every two rows and two columns become one pixel when
     any of the four is set; glyphs are moved up so that the Devanagari
@@ -282,6 +343,7 @@ def main():
             chosen[cp] = (rows, kind_of(cp, w, 8 if typ != 'bdf' else cell_w))
             n_new += 1
         print('%s: %d glyphs' % (p[1], n_new))
+    print('Greek and Cyrillic: %d glyphs derived' % greek_cyrillic_complete(chosen))
     cps = sorted(chosen)
     n = len(cps)
     if n > MAX_GLYPHS:

@@ -217,17 +217,17 @@ than ChaCha20 (bytes and a table instead of 32-bit additions and rotations).
 ### External font
 
 Characters that cannot be shown in ASCII are drawn with bitmap fonts on the
-flash data pages (08h-10h, 147 KB). `fonts/fonts.txt` lists them in
+flash data pages (08h-11h, 148 KB). `fonts/fonts.txt` lists them in
 priority order:
 
 | Font | Scripts |
 |------|---------|
-| [k6x8](https://littlelimit.net/k6x8.htm) (6x8) | Japanese (JIS levels 1 and 2), kana, Greek, Cyrillic, symbols |
+| [k6x8](https://littlelimit.net/k6x8.htm) (6x8) | Japanese (JIS levels 1 and 2), kana, Greek, Cyrillic, symbols; Greek and Cyrillic letters with accents are made from the plain ones |
 | [QuanPixel](https://diaowinner.itch.io/galmuri-extended) (8x8) | Hangul (4363 syllables), the Han characters of GB 2312 and Big5 level 1 that JIS lacks, bopomofo |
 | [unscii](http://pelulamu.net/unscii/) Arabic (8x8) | Arabic with its contextual forms (missing letters made from similar ones) |
 | [GNU Unifont](https://unifoundry.com/unifont/) Devanagari, halved to 8x8 | Devanagari |
 
-- `tools/mkfont84.py` merges them (15877 glyphs): a table by the high byte
+- `tools/mkfont84.py` merges them (15947 glyphs): a table by the high byte
   of the code point, the sorted low bytes, 2 bits per glyph (half width,
   full width, mark drawn over the glyph before it) and 8 bytes of pixels
   per glyph, and a checksum.

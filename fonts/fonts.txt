@@ -1,12 +1,13 @@
 # The external font (tools/mkfont84.py): the first font that has a code point
 # gives its glyph.
 #
-# Japanese (JIS levels 1 and 2), kana, Greek, Cyrillic, symbols
+# Japanese (JIS levels 1 and 2), kana, Greek, Cyrillic, symbols (Greek and
+# Cyrillic letters with accents that it lacks are made by mkfont84.py)
 bdf      k6x8/k6x8_gothic.bdf
 # Hangul (all 4363 syllables of QuanPixel), jamo, bopomofo, CJK symbols,
 # Han characters of GB 2312 and Big5 level 1 that JIS lacks
 bdf      quanpixel/quan.bdf   1100-11FF 3000-312F 3130-318F 31A0-31FF 3200-33FF 4E00-9FFF:gb2312+big5 AC00-D7A3 FF00-FFEF
-# Arabic letters and their contextual forms (os/html.c picks the forms)
+# Arabic letters and their contextual forms (app/browser/html.c picks the forms)
 unscii   unscii/arabic.txt    0600-06FF FB50-FDFF FE70-FEFF
 # Devanagari, GNU Unifont halved to 8x8
 unifont  unifont/devanagari.hex   0900-097F
