@@ -26,7 +26,8 @@ IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
 OF SUCH DAMAGE.
 
 lwip/ is lwIP (BSD license, see lwip/COPYING). emu/third_party/z80.h is from
-floooh/chips (zlib license).
+floooh/chips (zlib license). lib/inflate/inflate.c is altered from tinf by
+Joergen Ibsen (zlib license, in the file).
 
 fonts/k6x8/ is the k6x8 font by Num Kadoma (free: use, copy and distribute
 with or without modification, see fonts/k6x8/k6x8.txt).

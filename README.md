@@ -34,11 +34,12 @@ git clone --recursive https://github.com/MaxSignal/lwip84.git
 | `lib/crypto/` | SHA-256/HMAC/HKDF, ChaCha20/Poly1305, AES-128/GCM, X25519, random numbers |
 | `lib/font/` | the external font (Japanese, Chinese, Hangul, Arabic, Devanagari, ...) |
 | `lib/ime/` | input methods: Japanese (kana-kanji conversion), Chinese (pinyin), Hangul, Cyrillic, Greek, Arabic, Devanagari |
+| `lib/inflate/` | Deflate decompression from extended RAM to extended RAM, CRC-32 (ZIPs in the TI-OS browser) |
 | [`app/browser/`](app/browser/README.md) | web browser |
 | [`app/ssh/`](app/ssh/README.md) | SSH client |
 | [`app/console/`](app/console/README.md) | network console and socket examples |
 | `emu/` | `emu84`, a headless emulator with a USB host |
-| `tools/`, `tests/` | build tools, code generators, host tests (more under `app/*/tests/` and `lib/ime/tests/`) |
+| `tools/`, `tests/` | build tools, code generators, host tests (more under `app/*/tests/` and `lib/*/tests/`) |
 | `fonts/`, `dict/`, `patches/`, `lwip/` | font sources, conversion dictionaries, the lwIP fix, lwIP |
 
 ## Connecting
@@ -341,12 +342,15 @@ gcc -O2 -I lib/crypto -I tests -o ../tmp/aes_test tests/aes_test.c lib/crypto/ae
 gcc -O2 -I lib/crypto -o ../tmp/crypto_test tests/crypto_test.c lib/crypto/sha256.c lib/crypto/chacha.c lib/crypto/x25519.c && ../tmp/crypto_test
 gcc -O2 -DDICT_HOST -I lib/ime -o ../tmp/ime_test lib/ime/tests/ime_test.c lib/ime/ime.c lib/ime/dict.c
 ../tmp/ime_test build-84p/dict.bin        # without the file: no conversion
+gcc -O2 -DINFLATE_HOST -I lib/inflate -o ../tmp/inflate_test lib/inflate/tests/inflate_test.c lib/inflate/inflate.c
+python3 lib/inflate/tests/mkzips.py ../tmp/zips && ../tmp/inflate_test ../tmp/zips/*.zip   # or any ZIPs
 ```
 
 ## License
 
 BSD (see `COPYING`); lwIP is BSD, `emu/third_party/z80.h` is from
-[floooh/chips](https://github.com/floooh/chips) (zlib), the fonts in
+[floooh/chips](https://github.com/floooh/chips) (zlib), `lib/inflate/` is
+altered from [tinf](https://github.com/jibsen/tinf) (zlib), the fonts in
 `fonts/` keep their licenses: k6x8 by Num Kadoma (free to use, copy and
 modify, `fonts/k6x8/k6x8.txt`), QuanPixel (SIL OFL 1.1), unscii (CC0) and GNU
 Unifont (SIL OFL 1.1 or GPL 2+ with the font exception).

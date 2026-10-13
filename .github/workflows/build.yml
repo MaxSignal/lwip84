@@ -126,6 +126,12 @@ jobs:
           python3 tools/mkdict84.py build dict "$TMPDIR/dict.bin"
           "$TMPDIR/ime_test" "$TMPDIR/dict.bin"
 
+      - name: Inflate tests
+        run: |
+          gcc -O2 -Wall -DINFLATE_HOST -I lib/inflate -o "$TMPDIR/inflate_test" lib/inflate/tests/inflate_test.c lib/inflate/inflate.c
+          python3 lib/inflate/tests/mkzips.py "$TMPDIR/zips"
+          "$TMPDIR/inflate_test" "$TMPDIR"/zips/*.zip
+
       - name: Collect files
         run: |
           set -e

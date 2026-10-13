@@ -235,7 +235,7 @@ leave:
 	call	0x0050				; B_JUMP _JForceCmdNoChar
 	.dw	0x4027
 
-;; The variables the browser downloaded (app/browser/browser.c): a table
+;; The variables the browser downloaded (app/browser/tidl.c): a table
 ;; at 4000h of RAM page 85h, count then 13 bytes each: type, name (8),
 ;; bytes with the size word (2), where they are (2, 4000h-7FFFh of page
 ;; 85h).  Each replaces a variable of that name if there is room for it.

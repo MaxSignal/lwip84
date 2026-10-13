@@ -3,8 +3,8 @@
 A text web browser for lwIP-84+: HTTP/1.0 and HTTPS with its own HTML
 renderer (no CSS, no JavaScript), forms and search. **APPS, 1** opens it;
 in TI-OS it is the app `lwIPweb` ([platform/](../../platform/README.md)),
-which can also download TI-OS programs and appvars (`.8xp`, `.8xv`, `.8xg`)
-straight into TI-OS.
+which can also download TI-OS programs and appvars (`.8xp`, `.8xv`, `.8xg`,
+also from a `.zip`) straight into TI-OS (`tidl.c`).
 
 | English | 日本語 | 中文 | 한국어 |
 |:-:|:-:|:-:|:-:|

@@ -87,7 +87,7 @@ endif
 
 CFLAGS  = -mz80 --std-sdcc11 --opt-code-size --constseg CONST $(DEFS) -DDICT_PAGE=0x$(DICT_PAGE) \
           -DFE_ASM '-D__attribute__(x)=' \
-          -I include -I kernel -I lib/net -I lib/crypto -I lib/font -I lib/ime \
+          -I include -I kernel -I lib/net -I lib/crypto -I lib/font -I lib/ime -I lib/inflate \
           -I app/browser -I app/ssh -I app/console -I $(LWIP_SRC)/include
 
 # modules that must stay in page 0 (interrupt path, runtime; in the TI-OS
@@ -123,7 +123,8 @@ BANKED_C := $(filter-out app/console/%,$(BANKED_C))
 ifeq ($(APP),ssh)
 BANKED_C := $(filter-out app/browser/%,$(BANKED_C))
 else
-BANKED_C := $(filter-out app/ssh/%,$(BANKED_C))
+# the browser app also brings programs and ZIPs of them into TI-OS
+BANKED_C := $(filter-out app/ssh/%,$(BANKED_C)) app/browser/tidl.c lib/inflate/inflate.c
 endif
 endif
 
