@@ -260,6 +260,17 @@ static int cmd_sendos(const char *file, int force)
     return 0;
 }
 
+/* a Flash application (.8xk) to TI-OS */
+static int cmd_sendapp(const char *file)
+{
+    int err;
+    printf("sending %s...\n", file);
+    if ((err = ticalcs_calc_send_app2(calc, file)))
+        return fail("app transfer", err);
+    printf("app sent\n");
+    return 0;
+}
+
 /* parse an OS/app file like TiLP would, without a calculator */
 static int cmd_check(const char *file)
 {
@@ -293,7 +304,8 @@ int main(int argc, char **argv)
     if (argc > 2 && !strcmp(argv[1], "check"))
         return cmd_check(argv[2]);
     if (argc < 2) {
-        fprintf(stderr, "usage: ti84link info | backup DIR | romdump FILE | sendos FILE.8xu [--force]\n");
+        fprintf(stderr, "usage: ti84link info | backup DIR | romdump FILE | sendos FILE.8xu [--force]\n"
+                        "       | sendapp FILE.8xk | check FILE\n");
         return 2;
     }
     if (open_calc()) {
@@ -308,6 +320,8 @@ int main(int argc, char **argv)
         rc = cmd_romdump(argv[2], argc > 3 ? argv[3] : NULL);
     else if (!strcmp(argv[1], "sendos") && argc > 2)
         rc = cmd_sendos(argv[2], argc > 3 && !strcmp(argv[3], "--force"));
+    else if (!strcmp(argv[1], "sendapp") && argc > 2)
+        rc = cmd_sendapp(argv[2]);
     else {
         fprintf(stderr, "ti84link: bad command\n");
         rc = 2;

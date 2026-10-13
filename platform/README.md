@@ -64,8 +64,9 @@ page, its length at 4083h, the name and page count in the header) and
 `rabbitsign` signs it with the "shareware" key 0104 (`tools/local/bin`,
 built from <https://github.com/abbrev/rabbitsign>).
 
-After the app, TI-OS may need the USB cable plugged in again before it
-talks to a computer.
+Send the `.8xk` to TI-OS with TiLP, TI Connect or `ti84link sendapp FILE`;
+it appears under APPS. After the app, TI-OS may need the USB cable plugged
+in again before it talks to a computer.
 
 ### Testing
 
