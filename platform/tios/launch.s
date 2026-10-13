@@ -5,7 +5,8 @@
 ;;
 ;; Start: save TI-OS's RAM (page 81h -> 87h, 80h -> 86h), its SP and the
 ;; ports that change, copy the image to 8184h and go to app_init.  Exit:
-;; the same backwards, then back to TI-OS's home screen.  Interrupts are
+;; the same backwards, IY = flags (89F0h) as TI-OS needs it everywhere,
+;; then back to TI-OS's home screen.  Interrupts are
 ;; off throughout: the stack is not usable while the pages move.
 	.module app_launch
 	.globl	app_init
@@ -103,6 +104,7 @@ launch:
 	ld	sp, ix
 	ex	af, af'
 	ld	i, a
+	ld	iy, #0x89F0			; TI-OS's flags: its ISR uses IY
 	ei
 	call	0x0050				; B_JUMP _JForceCmdNoChar
 	.dw	0x4027
@@ -221,6 +223,7 @@ leave:
 	call	lcd_cmd
 	ld	a, #0x05
 	call	lcd_cmd
+	ld	iy, #0x89F0			; TI-OS's flags: its ISR and bcalls use IY
 	ei
 	call	0x0050				; B_JUMP _JForceCmdNoChar
 	.dw	0x4027

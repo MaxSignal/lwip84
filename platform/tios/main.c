@@ -37,9 +37,22 @@ static uint8_t main_r;
 
 extern uint8_t __app_save[];            /* platform/tios/crt0.s */
 
+/* TI-OS's settings of the USB controller's outer ports, taken before the
+ * app sets it up: given back so that TI-OS sees the cable again */
+static uint8_t usb_gpio, usb_pull, usb_vpwr, usb_ctrl, usb_line_mask, usb_proto_ie;
+
 static void quit(void)
 {
-    usb_stop();                         /* TI-OS gets its USB controller back */
+    __asm__("di");
+    usb_stop();
+    port_usb_proto_ie = 0;
+    port_usb_line_mask = 0;
+    port_usb_ctrl = usb_ctrl;
+    port_usb_vpwr = usb_vpwr;
+    port_usb_pull = usb_pull;
+    port_gpio = usb_gpio;
+    port_usb_line_mask = usb_line_mask;
+    port_usb_proto_ie = usb_proto_ie;
     __app_save[9] = lcd_contrast;       /* and the contrast as it is now */
     __app_exit();
 }
@@ -52,6 +65,12 @@ void main(void)
     port_int_mask = INT_ON | INT_TIMER1 | INT_POWER;
     __asm__("ei");
     k_detect_platform();
+    usb_gpio = port_gpio;
+    usb_pull = port_usb_pull;
+    usb_vpwr = port_usb_vpwr;
+    usb_ctrl = port_usb_ctrl;
+    usb_line_mask = port_usb_line_mask;
+    usb_proto_ie = port_usb_proto_ie;
     heap_init();
     lcd_contrast = __app_save[9] <= 39 ? __app_save[9] : 24;   /* TI-OS's */
     lcd_init();

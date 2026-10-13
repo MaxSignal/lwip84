@@ -499,7 +499,8 @@ static void port_out(uint8_t p, uint8_t v)
             for (int i = 0; i < 2 * 0x4000 && bad < 0; i++)
                 if (ti.ram[i] != ti.app_ram[i] && !(i >= 0x3FE0 && i < 0x3FEE) && i != 0x4447)
                     bad = i;
-            fprintf(stderr, "emu84: contrast at 8447h: %u\n", ti.ram[0x4447]);
+            fprintf(stderr, "emu84: contrast at 8447h: %u, IY %04X%s\n", ti.ram[0x4447],
+                    (unsigned)ti.cpu.iy, ti.cpu.iy == 0x89F0 ? "" : " (TI-OS needs 89F0h)");
             fprintf(stderr, "emu84: app exit to TI-OS: SP %04X, port 03 %02X, "
                     "RAM %s", (unsigned)ti.cpu.sp, ti.int_mask, bad < 0 ? "restored\n" : "");
             if (bad >= 0)

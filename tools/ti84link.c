@@ -124,6 +124,10 @@ static int cmd_info(void)
     printf("boot:    %s\n", ci.boot_version);
     printf("hw:      %u\n", ci.hw_version);
     printf("ID:      %s\n", ci.main_calc_id);
+    if (ci.mask & INFOS_RAM_FREE)
+        printf("RAM:     %lu bytes free\n", (unsigned long)ci.ram_free);
+    if (ci.mask & INFOS_FLASH_FREE)
+        printf("archive: %lu bytes free\n", (unsigned long)ci.flash_free);
     return 0;
 }
 
