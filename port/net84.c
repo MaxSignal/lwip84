@@ -50,6 +50,7 @@ void net84_init(void)
 
 void net84_poll(void)
 {
+    usb_watchdog();
     usb_poll();
     if (net84_netif)
         netif_ncm_poll(net84_netif);

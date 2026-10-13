@@ -24,7 +24,7 @@ uint8_t usb_last_error;
 uint32_t usb_last_activity;
 uint16_t usb_ntb_in_size = USB_NTB_IN_MAX;
 static uint8_t usb_config;
-static uint8_t check_div;
+static uint8_t check_div, vbus_low;
 
 /* ------------------------------------------------------------------ */
 /* descriptors                                                         */
@@ -472,10 +472,18 @@ void usb_service(uint8_t tick)
             usb_irq_masked = 0;
             port_usb_proto_ie = 1;
         }
+        /* VBus gone for half a second: the cable was pulled.  A single low
+         * reading is not enough (seen while the calculator was busy); a
+         * false alarm would drop the configuration behind the host's back */
         if (!(port_usb_lines & 0x40) && usb_state > USB_WAIT_HOST) {
-            log_event(USB_LOG_VBUS_LOST, NULL, 0);
-            reset_function();
-            usb_state = USB_WAIT_HOST;
+            if (++vbus_low >= 5) {
+                vbus_low = 0;
+                log_event(USB_LOG_VBUS_LOST, NULL, 0);
+                reset_function();
+                usb_state = USB_WAIT_HOST;
+            }
+        } else {
+            vbus_low = 0;
         }
     }
     if (bus & 0x04) {                   /* bus reset */

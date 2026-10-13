@@ -61,6 +61,8 @@ void far_read(uint8_t page, uint16_t addr, void *dst, uint16_t len);
 #define XRAM_BROWSER 0x00000UL          /* 64 KiB: web page text and links */
 #define XRAM_SSH 0x10000UL              /* 24 KiB: terminal scrollback */
 #define XRAM_CON 0x16000UL              /* 3 KiB: console history */
+#define XRAM_HIST 0x16D00UL             /* 4.75 KiB: browser history */
+#define XRAM_HIST_SIZE 0x1300u
 void xram_read(uint32_t addr, void *dst, uint16_t len);
 void xram_write(uint32_t addr, const void *src, uint16_t len);
 

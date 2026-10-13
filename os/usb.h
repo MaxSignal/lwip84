@@ -98,6 +98,8 @@ extern uint16_t usb_ntb_in_size;    /* set by the host (SET_NTB_INPUT_SIZE) */
 extern uint8_t usb_last_error;
 
 void usb_start(void);
+void usb_watchdog(void);               /* main loop: reconnect a lost function */
+extern uint8_t usb_recoveries;
 void usb_stop(void);
 void usb_poll(void);                 /* main loop: EP0 + NCM data path */
 void usb_service(uint8_t tick);      /* EP0 core, interrupts disabled (ISR) */

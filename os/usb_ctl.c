@@ -89,3 +89,44 @@ void usb_log_print(void)
         }
     }
 }
+
+/* Main loop: if the function was configured once and the cable is still in
+ * (VBus present) but the host has not configured it again for a while, the
+ * two sides have lost each other (for example after a reset the host never
+ * followed up).  Disconnect and connect again, as replugging would, so
+ * that the host enumerates the calculator anew.  The wait doubles after
+ * each try, up to 30 s. */
+uint8_t usb_recoveries;
+
+void usb_watchdog(void)
+{
+    static uint8_t was_configured;
+    static uint32_t lost_at;
+    static uint16_t wait_ms = 3000;
+    uint32_t now;
+    if (usb_state == USB_CONFIGURED) {
+        was_configured = 1;
+        lost_at = 0;
+        wait_ms = 3000;
+        return;
+    }
+    if (!was_configured || usb_state == USB_OFF || !(port_usb_lines & 0x40)) {
+        lost_at = 0;
+        return;
+    }
+    now = k_now_ms();
+    if (!lost_at) {
+        lost_at = now | 1;
+        return;
+    }
+    if ((uint32_t)(now - lost_at) < wait_ms)
+        return;
+    dbg_printf("usb: not configured for %u ms, reconnecting\n", wait_ms);
+    usb_recoveries++;
+    usb_stop();
+    k_delay_ms(250);                    /* the host sees the disconnect */
+    usb_start();
+    lost_at = 0;
+    if (wait_ms < 30000)
+        wait_ms *= 2;
+}

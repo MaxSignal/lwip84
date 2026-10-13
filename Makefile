@@ -110,7 +110,8 @@ $(FIXED_ASM): tools/gen_fe_z80.py tools/gen_sha256_z80.py tools/gen_poly1305_z80
 	$(PY) tools/gen_poly1305_z80.py $@.p13
 	cat $@.fe $@.sha $@.p13 $@.aes > $@
 
-$(B)/banked.stamp: $(COMMON_ASM) $(BANKED_ASM) $(FIXED_ASM) tools/banker.py
+$(B)/banked.stamp: $(COMMON_ASM) $(BANKED_ASM) $(FIXED_ASM) tools/banker.py tools/check_iy.py
+	$(PY) tools/check_iy.py $(COMMON_ASM) $(BANKED_ASM)
 	rm -rf $(B)/bk && mkdir -p $(B)/bk
 	$(PY) tools/banker.py --outdir $(B)/bk --thunks $(B)/bk/thunks.s --map $(B)/banks.txt --ldargs $(B)/banks.lnk --banks $(BANKS) \
 	    $(addprefix common:,$(COMMON_ASM)) $(addprefix banked:,$(BANKED_ASM)) fixed@$(FIXED):$(FIXED_ASM)

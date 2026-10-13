@@ -544,7 +544,11 @@ static void emit_ascii(char c)
         if (is_space(c))
             c = ' ';
         if (cap_n < CAP_MAX && !(c == ' ' && (!cap_n || cap_sp))) {
-            hs->cap[cap_n++] = c;
+            /* not hs->cap[cap_n++] = c: SDCC 4.4.0 loses the array
+             * address there (tools/check_iy.py) */
+            char *p = hs->cap + cap_n;
+            *p = c;
+            cap_n++;
             cap_sp = c == ' ';
         }
         break;
@@ -581,8 +585,10 @@ static void emit_wide(uint16_t g)
         break;
     case SK_CAP:
         if (cap_n + 2 <= CAP_MAX) {
-            hs->cap[cap_n++] = FONT_LEAD(g);
-            hs->cap[cap_n++] = FONT_TRAIL(g);
+            char *p = hs->cap + cap_n;
+            p[0] = FONT_LEAD(g);
+            p[1] = FONT_TRAIL(g);
+            cap_n += 2;
             cap_sp = 0;
         }
         break;

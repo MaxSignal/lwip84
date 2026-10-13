@@ -627,6 +627,8 @@ static int do_command(char *line)
         return key_set(argv[1], 1) ? 1 : 0;
     } else if (!strcmp(argv[0], "up") && argc > 1) {
         return key_set(argv[1], 0) ? 1 : 0;
+    } else if (!strcmp(argv[0], "vbusglitch") && argc > 1) {
+        usb_vbus_glitch(atof(argv[1]));
     } else if (!strcmp(argv[0], "on")) {
         key_set("on", 1);
         run_ms(100);

@@ -126,6 +126,8 @@ static void show_info(void)
         con_printf("gw %s\n", ip4addr_ntoa(netif_ip4_gw(net84_netif)));
     con_printf("dns %s\n", ipaddr_ntoa(dns_getserver(0)));
     con_printf("heap %u free, font %s\n", heap_free_bytes(), font_ok ? "ok" : "none");
+    if (usb_recoveries)
+        con_printf("usb reconnected %u times\n", usb_recoveries);
 }
 
 static const char *gateway_str(void)

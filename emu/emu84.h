@@ -52,4 +52,5 @@ int usb_port_out(uint8_t port, uint8_t val);
 void usb_tick(uint64_t now_ps);
 uint64_t usb_next_event(void);
 int usb_irq_pending(void);
+void usb_vbus_glitch(double ms);
 #endif

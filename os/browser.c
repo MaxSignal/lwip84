@@ -25,8 +25,11 @@
 #define COLS CON_COLS
 #define ROWS 9
 #define BODY_MAX 400
-#define X_HIST (XRAM_BROWSER + 0xF600UL)
-#define HIST_MAX 6
+/* history: URL and POST body of each page (a search result page can only
+ * be fetched again with its body) */
+#define X_HIST XRAM_HIST
+#define HIST_ENTRY (URL_MAX + 1 + BODY_MAX + 1)
+#define HIST_MAX (XRAM_HIST_SIZE / HIST_ENTRY)
 #define X_STATE (XRAM_BROWSER + 0xFC00UL)  /* url and host while not running */
 
 #define SEARCH_URL "https://lite.duckduckgo.com/lite/"
@@ -53,6 +56,7 @@ struct browser_mem {
     char url[URL_MAX + 1], host[64];    /* saved: keep first */
     char edit_buf[URL_MAX + 1];
     char referer[URL_MAX + 1];
+    char body[BODY_MAX + 1];            /* POST body of the page, "" for GET */
     char location[URL_MAX + 1];
     char request[1400];
     struct line_edit le;
@@ -227,6 +231,11 @@ static void load(const char *u, const char *body, const char *ref)
     uint16_t port, n;
     int8_t tls;
     stop();
+    if (body != bm->body) {
+        strncpy(bm->body, body ? body : "", BODY_MAX);
+        bm->body[BODY_MAX] = 0;
+    }
+    body = bm->body[0] ? bm->body : NULL;
     if (ref && ref != bm->referer)
         strncpy(bm->referer, ref, URL_MAX);
     if (!ref)
@@ -250,7 +259,9 @@ static void load(const char *u, const char *body, const char *ref)
                             " HTTP/1.0\r\nHost: %s\r\nUser-Agent: lwIP-84+/1.0\r\n"
                             "Accept: text/html, text/plain\r\nAccept-Encoding: identity\r\n",
                             host);
-    if (bm->referer[0] && strcmp(bm->referer, url))
+    /* also when it is the same URL: forms that post to their own page
+     * (DuckDuckGo Lite) are answered only with a Referer */
+    if (bm->referer[0])
         n += (uint16_t)snprintf(request + n, sizeof(request) - n, "Referer: %s\r\n", bm->referer);
     if (body)
         n += (uint16_t)snprintf(request + n, sizeof(request) - n,
@@ -297,17 +308,24 @@ static void search(const char *words)
 
 static void push_history(void)
 {
+    uint8_t i;
     if (!url[0])
         return;
     if (hist_n == HIST_MAX) {
-        uint8_t i;
+        /* drop the oldest; location and edit_buf are free here */
         for (i = 1; i < HIST_MAX; i++) {
-            xram_read(X_HIST + i * (URL_MAX + 1), location, URL_MAX + 1);
-            xram_write(X_HIST + (i - 1) * (URL_MAX + 1), location, URL_MAX + 1);
+            uint32_t from = X_HIST + (uint32_t)i * HIST_ENTRY, to = from - HIST_ENTRY;
+            xram_read(from, location, URL_MAX + 1);
+            xram_write(to, location, URL_MAX + 1);
+            xram_read(from + URL_MAX + 1, edit_buf, URL_MAX + 1);
+            xram_write(to + URL_MAX + 1, edit_buf, URL_MAX + 1);
+            xram_read(from + 2 * (URL_MAX + 1), edit_buf, BODY_MAX + 1 - (URL_MAX + 1));
+            xram_write(to + 2 * (URL_MAX + 1), edit_buf, BODY_MAX + 1 - (URL_MAX + 1));
         }
         hist_n--;
     }
-    xram_write(X_HIST + hist_n * (URL_MAX + 1), url, URL_MAX + 1);
+    xram_write(X_HIST + (uint32_t)hist_n * HIST_ENTRY, url, URL_MAX + 1);
+    xram_write(X_HIST + (uint32_t)hist_n * HIST_ENTRY + URL_MAX + 1, bm->body, BODY_MAX + 1);
     hist_n++;
 }
 
@@ -803,15 +821,17 @@ uint8_t browser_key(uint8_t k)
     case K_DEL:
         if (hist_n) {
             hist_n--;
-            xram_read(X_HIST + hist_n * (URL_MAX + 1), url, URL_MAX + 1);
+            xram_read(X_HIST + (uint32_t)hist_n * HIST_ENTRY, url, URL_MAX + 1);
+            xram_read(X_HIST + (uint32_t)hist_n * HIST_ENTRY + URL_MAX + 1, bm->body, BODY_MAX + 1);
             redirects = 0;
-            load(url, NULL, NULL);
+            /* a POST again with its body and the page itself as Referer */
+            load(url, bm->body, bm->body[0] ? url : NULL);
         }
         break;
     case K_ENTER:
         if (url[0]) {
             redirects = 0;
-            load(url, NULL, NULL);
+            load(url, bm->body, bm->body[0] ? url : NULL);
         }
         break;
     case K_CLEAR:
@@ -853,12 +873,14 @@ void browser_poll(void)
         }
         rx_bytes += n;
         http_feed(buf, (uint16_t)n);
-        if (hstate == H_DONE || html_full)
+        if (hstate == H_DONE || (page_open && html_full))
             break;
     }
     if (!scrolled && !top && html_main_line != HTML_NONE && html_main_line < html_lines)
         top = html_main_line;
-    if (html_full && hstate != H_DONE) {
+    /* only while this page's body arrives: html_full is still set from the
+     * previous page until html_begin() */
+    if (page_open && html_full && hstate != H_DONE) {
         stop();                         /* the text buffer is full */
         strcpy(msg, "page truncated");
         dbg_printf("web: %lu bytes, %u lines (full), %lu ms\n", rx_bytes, html_lines,

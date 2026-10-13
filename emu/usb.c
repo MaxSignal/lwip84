@@ -160,11 +160,22 @@ static uint8_t r4c_read(void)
     return v;
 }
 
+/* "vbusglitch MS": the calculator reads VBus low for a while, the host
+ * notices nothing (a false reading of the line) */
+static uint64_t vbus_glitch_until;
+
+void usb_vbus_glitch(double ms)
+{
+    vbus_glitch_until = ti.now_ps + (uint64_t)(ms * 1e9);
+    ulog("VBus reads low for %.0f ms", ms);
+}
+
 static uint8_t r4d_read(void)
 {
     uint8_t v = 0x20;                   /* ID high: B cable or none */
     if (u.host_attached) {
-        v |= 0x40;                      /* VBus high */
+        if (ti.now_ps >= vbus_glitch_until)
+            v |= 0x40;                  /* VBus high */
         if (u.connected) v |= 0x02;     /* D+ high (pull-up) */
         else v |= 0x01;
         v |= 0x04;                      /* D- low */
