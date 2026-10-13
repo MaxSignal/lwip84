@@ -30,11 +30,16 @@ BANKS   = 1-7,73-79
 FIXED   = 7B
 PAGES   = 128
 DEVICE  = TI-84+SE
+# the conversion dictionaries: 20 pages in the middle of the SE's archive
+DICT_PAGE   = 40
+DICT_BUDGET = 327680
 else
 BANKS   = 1-7,33-39
 FIXED   = 3B
 PAGES   = 64
 DEVICE  = TI-84+
+DICT_PAGE   = 08
+DICT_BUDGET = 131072
 endif
 
 ifeq ($(DEBUG),1)
@@ -50,7 +55,7 @@ B      := $(B)-48k
 DEFS   += -DTI84P_RAM48
 endif
 
-CFLAGS  = -mz80 --std-sdcc11 --opt-code-size --constseg CONST $(DEFS) \
+CFLAGS  = -mz80 --std-sdcc11 --opt-code-size --constseg CONST $(DEFS) -DDICT_PAGE=0x$(DICT_PAGE) \
           -DFE_ASM '-D__attribute__(x)=' \
           -I include -I os -I lib/net -I lib/crypto -I lib/font -I lib/ime \
           -I app/browser -I app/ssh -I app/console -I $(LWIP_SRC)/include
@@ -149,7 +154,7 @@ endif
 DICT_BIN = $(B)/dict.bin
 $(DICT_BIN): dict/ja.tsv dict/zh.tsv tools/mkdict84.py
 	@mkdir -p $(B)
-	$(PY) tools/mkdict84.py build dict $@
+	$(PY) tools/mkdict84.py build dict $@ $(DICT_BUDGET)
 
 # the browser's Shift_JIS table (app/browser/html.h: HTML_JIS_PAGE)
 JIS_BIN = $(B)/jis.bin
@@ -159,7 +164,7 @@ $(JIS_BIN): tools/mkjis84.py
 
 $(B)/lwip84.rom: $(B)/lwip84.ihx tools/mkrom.py $(FONT_BIN) $(JIS_BIN) $(DICT_BIN)
 	$(PY) tools/mkrom.py --pages $(PAGES) --pagelist $(B)/pages.txt $(FONT_ARG) \
-	    --data 2A:$(JIS_BIN) --data 08:$(DICT_BIN) $< $@
+	    --data 2A:$(JIS_BIN) --data $(DICT_PAGE):$(DICT_BIN) $< $@
 	@grep -E "^_(CODE|CONST|HOME|GSINIT|GSFINAL|INITIALIZER|DATA|BSS|INITIALIZED) " $(B)/lwip84.map | sort -u
 
 # OS upgrade for the calculator, signed with TI's public OS key 0A

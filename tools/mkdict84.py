@@ -90,7 +90,7 @@ def extract(mozc, unihan, font, out):
                 cost -= 1000
             if best.get((r, w), 1 << 30) > cost:
                 best[(r, w)] = cost
-    items = sorted(best.items(), key=lambda kv: (kv[1], kv[0]))[:16000]
+    items = sorted(best.items(), key=lambda kv: (kv[1], kv[0]))[:36000]
     with open(os.path.join(out, 'ja.tsv'), 'w', encoding='utf-8') as f:
         f.write('# from Mozc dictionary_oss (IPAdic, see COPYING): reading, word\n')
         for (r, w), _ in items:

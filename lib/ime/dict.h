@@ -4,7 +4,9 @@
 #define DICT_H
 #include <stdint.h>
 
-#define DICT_PAGE 0x08          /* first flash page of the dictionaries */
+#ifndef DICT_PAGE
+#define DICT_PAGE 0x08          /* first flash page (the SE build: 40h) */
+#endif
 
 extern uint8_t dict_ok;
 void dict_init(void);           /* checks the header: dict_ok */

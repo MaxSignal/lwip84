@@ -116,8 +116,8 @@ DOWN takes the next candidate, UP the one before, LEFT/RIGHT make the
 converted part one character shorter or longer, ENTER puts the candidate
 in (the rest stays to be converted), DEL goes back to the kana. Japanese
 candidates end with the kana and katakana. The dictionaries
-(`dict/`, flash pages 08h-0Fh) hold 11,600 Japanese words from Mozc's open
-dictionary, chosen by frequency (nouns first, the forms of verbs that
+(`dict/`, flash pages 08h-0Fh; 40h-53h on the SE) hold 11,600 Japanese
+words (31,600 on the SE) from Mozc's open dictionary, chosen by frequency (nouns first, the forms of verbs that
 others follow), and the 6,900 simplified characters of GB 2312 by pinyin,
 ordered by frequency (Unihan). A word that is not there can be put
 together from single characters.
@@ -210,7 +210,8 @@ of the TI-84 Plus writes a page sent as 10h-1Fh to 30h-3Fh and did not take
 2Ch-32h (`tools/pagetest.sh` sends marked pages, the debug build's Y= shows
 where they landed), so data is on pages 08h-0Fh and 20h-2Bh: the external
 font on 20h-29h, the browser's Shift_JIS table on 2Ah-2Bh, the conversion
-dictionaries on 08h-0Fh. `tools/mkrom.py` refuses the other pages.
+dictionaries on 08h-0Fh. The SE build puts the dictionaries on 40h-53h
+(320 KiB, its boot code has not been tested with `pagetest.sh`). `tools/mkrom.py` refuses the other pages.
 
 The six other RAM pages (96 KiB) are reached through `xram_read` /
 `xram_write` and hold the web page (64 KiB), the SSH scrollback (24 KiB),
