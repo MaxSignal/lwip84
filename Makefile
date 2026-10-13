@@ -107,7 +107,7 @@ BANKED_C = platform/$(PLATFORM)/main.c kernel/power.c \
            $(LWIP_C)
 
 # lwIP (git submodule lwip/, STABLE-2_2_1_RELEASE); tcp_in.c is compiled
-# with patches/tcp-persist-timer.patch applied
+# with patches/tcp-persist-timer.patch and tcp-syn-nrtx.patch applied
 LWIP_SRC = lwip/src
 LWIP_C = $(addprefix $(LWIP_SRC)/, \
            core/init.c core/def.c core/dns.c core/inet_chksum.c core/ip.c core/mem.c \
@@ -149,10 +149,11 @@ $(B)/asm/lwip/%.asm: $(LWIP_SRC)/%.c $(HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -S $< -o $@
 
-$(B)/patched/core/tcp_in.c: $(LWIP_SRC)/core/tcp_in.c patches/tcp-persist-timer.patch
+$(B)/patched/core/tcp_in.c: $(LWIP_SRC)/core/tcp_in.c patches/tcp-persist-timer.patch patches/tcp-syn-nrtx.patch
 	@mkdir -p $(dir $@)
 	cp $< $@
 	patch -s -p2 -d $(B)/patched < patches/tcp-persist-timer.patch
+	patch -s -p2 -d $(B)/patched < patches/tcp-syn-nrtx.patch
 
 $(B)/asm/lwip/core/tcp_in.asm: $(B)/patched/core/tcp_in.c $(HDRS)
 	@mkdir -p $(dir $@)

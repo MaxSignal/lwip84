@@ -1,0 +1,15 @@
+--- a/src/core/tcp_in.c	2026-10-14 00:36:22.301761024 +0900
++++ b/src/core/tcp_in.c	2026-10-14 00:36:22.312599341 +0900
+@@ -905,8 +905,11 @@
+           pcb->rtime = -1;
+         } else {
+           pcb->rtime = 0;
+-          pcb->nrtx = 0;
+         }
++        /* the SYN's retransmissions do not count against the data: with
++         * TCP_SYNMAXRTX retries behind it, the first retransmission of data
++         * would otherwise drop the connection in tcp_slowtmr */
++        pcb->nrtx = 0;
+ 
+         /* Call the user specified function to call when successfully
+          * connected. */

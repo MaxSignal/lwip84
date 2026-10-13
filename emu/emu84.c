@@ -540,6 +540,8 @@ static void run_ps(uint64_t dur)
         else
             pins &= ~Z80_INT;
         pins = z80_tick(&ti.cpu, pins);
+        if (ti.cpu.sp >= 0xC000 && ti.cpu.sp < ti.sp_min)
+            ti.sp_min = ti.cpu.sp;
         if (pins & Z80_MREQ) {
             uint16_t a = Z80_GET_ADDR(pins);
             if (pins & Z80_RD) {
@@ -703,6 +705,10 @@ static int do_command(char *line)
                 fclose(f);
             }
         }
+    } else if (!strcmp(argv[0], "stack")) {
+        /* the deepest the stack went since the last "stack" */
+        fprintf(stderr, "emu84: lowest SP %04X\n", ti.sp_min);
+        ti.sp_min = 0xFFFF;
     } else if (!strcmp(argv[0], "regs")) {
         print_regs();
     } else if (!strcmp(argv[0], "quit")) {
@@ -794,6 +800,7 @@ int main(int argc, char **argv)
             memcpy(boot + 0x10, "emu84", 6);
     }
     ti.bank_b = 0x81;
+    ti.sp_min = 0xFFFF;
     ti.exec_lo = 0x08;                  /* values left by the retail boot code */
     ti.exec_hi = se ? 0x69 : 0x29;
     if (ti.app) {                       /* TI-OS lets apps run anywhere */

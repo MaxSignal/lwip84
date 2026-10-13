@@ -323,7 +323,7 @@ screen
 EOF
 ```
 
-Commands: `run MS`, `waitlog TEXT MS`, `key NAME`, `down`/`up NAME`, `on`,
+Commands: `run MS`, `waitlog TEXT MS`, `key NAME`, `down`/`up NAME`, `on`, `stack`,
 `vbusglitch MS`, `screen [FILE.pbm]`, `regs`, `dumpram FILE`,
 `profile on|FILE`, `quit`. The PC's `127.0.0.1` is `192.168.84.1` for the
 calculator. `tools/typekeys.py [--mode a] TEXT` turns text into `key`
